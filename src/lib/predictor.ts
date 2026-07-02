@@ -8,6 +8,7 @@ import {
   WeatherForecast,
   WeatherMetric,
 } from "@/types";
+import { MarketCityMatch } from "@/lib/cities";
 
 /**
  * Find the primary market in an event — the one with the highest 24h volume.
@@ -328,44 +329,54 @@ function forecastStdDev(metric: WeatherMetric): number {
  * forecast value. Each market's strike condition is then evaluated against
  * this distribution to produce a probability.
  */
+/**
+ * Compute P(market resolves YES) for a single market given a forecast value.
+ * Extracted from computeMarketLikelihoods so it can be reused per-city.
+ */
+export function computeMarketProbability(
+  forecastValue: number,
+  market: KalshiMarket,
+  metric: WeatherMetric,
+): number {
+  const sigma = forecastStdDev(metric);
+  const floor = market.floor_strike;
+  const cap = market.cap_strike;
+  let prob = 0;
+
+  switch (market.strike_type) {
+    case "greater":
+    case "greater_or_equal":
+      // P(X >= floor)
+      prob = floor !== null ? 1 - normalCdf(floor, forecastValue, sigma) : 0;
+      break;
+    case "less":
+    case "less_or_equal":
+      // P(X <= cap)
+      prob = cap !== null ? normalCdf(cap, forecastValue, sigma) : 0;
+      break;
+    case "between":
+      // P(floor <= X <= cap)
+      if (floor !== null && cap !== null) {
+        prob = normalCdf(cap, forecastValue, sigma) - normalCdf(floor, forecastValue, sigma);
+      }
+      break;
+    default:
+      prob = 0;
+  }
+
+  // Clamp to [0, 1] (numerical safety)
+  return Math.max(0, Math.min(1, prob));
+}
+
 export function computeMarketLikelihoods(
   forecastValue: number,
   markets: KalshiMarket[],
   metric: WeatherMetric,
 ): MarketLikelihood[] {
-  const sigma = forecastStdDev(metric);
-
-  return markets.map((m) => {
-    const floor = m.floor_strike;
-    const cap = m.cap_strike;
-    let prob = 0;
-
-    switch (m.strike_type) {
-      case "greater":
-      case "greater_or_equal":
-        // P(X >= floor)
-        prob = floor !== null ? 1 - normalCdf(floor, forecastValue, sigma) : 0;
-        break;
-      case "less":
-      case "less_or_equal":
-        // P(X <= cap)
-        prob = cap !== null ? normalCdf(cap, forecastValue, sigma) : 0;
-        break;
-      case "between":
-        // P(floor <= X <= cap)
-        if (floor !== null && cap !== null) {
-          prob = normalCdf(cap, forecastValue, sigma) - normalCdf(floor, forecastValue, sigma);
-        }
-        break;
-      default:
-        prob = 0;
-    }
-
-    // Clamp to [0, 1] (numerical safety)
-    prob = Math.max(0, Math.min(1, prob));
-
-    return { ticker: m.ticker, probability: prob };
-  });
+  return markets.map((m) => ({
+    ticker: m.ticker,
+    probability: computeMarketProbability(forecastValue, m, metric),
+  }));
 }
 
 /**
@@ -502,6 +513,147 @@ export function predictEvent(
     metric,
     unit,
     marketLikelihoods,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Multi-city prediction (one market per city)
+// ---------------------------------------------------------------------------
+
+/**
+ * Threshold above which a city counts as "matching" the question.
+ */
+const MULTI_CITY_MATCH_THRESHOLD = 0.6;
+
+/**
+ * Predict a multi-city event where each market corresponds to a different city.
+ *
+ * Fetches the relevant-day forecast for each market's city, computes a
+ * per-market probability using computeMarketProbability, and returns a
+ * PredictionResult whose marketLikelihoods drives the green gradient
+ * highlighting in MarketsList.
+ */
+export function predictMultiCityEvent(
+  event: KalshiEvent,
+  forecastMap: Record<string, WeatherForecast>,
+  marketCities: MarketCityMatch[],
+): PredictionResult | null {
+  if (!event.markets || event.markets.length === 0) return null;
+
+  const metric = detectMetric(event);
+  const unit = metricUnit(metric);
+
+  const primary = getPrimaryMarket(event.markets);
+  if (!primary) return null;
+
+  // Build a ticker -> MarketCityMatch lookup
+  const matchByTicker = new Map<string, MarketCityMatch>();
+  for (const mc of marketCities) {
+    matchByTicker.set(mc.ticker, mc);
+  }
+
+  const marketLikelihoods: MarketLikelihood[] = [];
+  const matchedNames: { label: string; value: number }[] = [];
+  let totalResolved = 0;
+
+  for (const m of event.markets) {
+    const mc = matchByTicker.get(m.ticker);
+    const cityCode = mc?.city?.code;
+    const forecast = cityCode ? forecastMap[cityCode] : undefined;
+
+    if (!cityCode || !forecast || !mc?.city) {
+      // Unresolved city — no forecast available
+      marketLikelihoods.push({
+        ticker: m.ticker,
+        probability: 0,
+        cityCode: cityCode ?? undefined,
+      });
+      continue;
+    }
+
+    totalResolved++;
+
+    // Find the relevant forecast day for this city
+    const forecastIdx = getRelevantForecastIndex(forecast, event, m);
+    const daily = forecast.daily[forecastIdx];
+    if (!daily) {
+      marketLikelihoods.push({ ticker: m.ticker, probability: 0, cityCode });
+      continue;
+    }
+
+    // Read the metric value for this city/day
+    let forecastValue: number;
+    switch (metric) {
+      case "temperature_low":
+        forecastValue = daily.min;
+        break;
+      case "precipitation":
+        forecastValue = daily.rain ?? daily.precip ?? 0;
+        break;
+      case "snowfall":
+        forecastValue = daily.snowfall ?? 0;
+        break;
+      case "temperature_high":
+      default:
+        forecastValue = daily.max;
+        break;
+    }
+
+    const prob = computeMarketProbability(forecastValue, m, metric);
+    marketLikelihoods.push({
+      ticker: m.ticker,
+      probability: prob,
+      forecastValue,
+      cityCode,
+    });
+
+    if (prob >= MULTI_CITY_MATCH_THRESHOLD) {
+      matchedNames.push({ label: mc.city.label, value: forecastValue });
+    }
+  }
+
+  const matchedCount = matchedNames.length;
+  const verdict: PredictionVerdict = matchedCount >= 1 ? "YES" : "UNCERTAIN";
+
+  // Highest-probability market for matchedMarket
+  let bestMarket: KalshiMarket | null = null;
+  let bestProb = -1;
+  for (const ml of marketLikelihoods) {
+    if (ml.probability > bestProb) {
+      bestProb = ml.probability;
+      const found = event.markets.find((mk) => mk.ticker === ml.ticker);
+      if (found) bestMarket = found;
+    }
+  }
+
+  // Build a human-readable detail string
+  const direction = describeStrike(primary, unit);
+  const matchedSummary = matchedNames
+    .slice(0, 5)
+    .map((c) => `${c.label} ${c.value}${unit}`)
+    .join(", ");
+
+  let detail: string;
+  if (matchedCount > 0) {
+    const cityWord = matchedCount === 1 ? "city" : "cities";
+    detail = `${matchedCount} of ${totalResolved} ${cityWord} forecast ${direction}: ${matchedSummary}`;
+  } else if (totalResolved > 0) {
+    const cityWord = totalResolved === 1 ? "city" : "cities";
+    detail = `No cities forecast ${direction} (checked ${totalResolved} ${cityWord})`;
+  } else {
+    detail = "No city forecasts available for this event";
+  }
+
+  return {
+    verdict,
+    forecastValue: null,
+    matchedMarket: bestMarket,
+    detail,
+    metric,
+    unit,
+    marketLikelihoods,
+    matchedCount,
+    multiCity: true,
   };
 }
 

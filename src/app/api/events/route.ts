@@ -5,9 +5,14 @@ import {
   computeEarliestClose,
   SortMode,
 } from "@/lib/kalshi";
-import { CITY_MAP } from "@/lib/cities";
+import { CITY_MAP, detectMultiCity } from "@/lib/cities";
 import { getForecastsForCities } from "@/lib/weather";
-import { predictEvent, computeOpportunityScore, detectMetric } from "@/lib/predictor";
+import {
+  predictEvent,
+  predictMultiCityEvent,
+  computeOpportunityScore,
+  detectMetric,
+} from "@/lib/predictor";
 import { EnrichedEvent } from "@/types";
 import { db } from "@/db/client";
 import { events } from "@/db/schema";
@@ -56,7 +61,12 @@ export async function GET(req: NextRequest) {
     // --- Collect city codes for forecast fetch ---
     const cityCodesNeeded: string[] = [];
     for (const row of dbEvents) {
-      if (row.cityCode && !cityCodesNeeded.includes(row.cityCode)) {
+      const multi = detectMultiCity(row.event);
+      if (multi) {
+        for (const c of multi.cities) {
+          if (!cityCodesNeeded.includes(c.code)) cityCodesNeeded.push(c.code);
+        }
+      } else if (row.cityCode && !cityCodesNeeded.includes(row.cityCode)) {
         cityCodesNeeded.push(row.cityCode);
       }
     }
@@ -65,8 +75,10 @@ export async function GET(req: NextRequest) {
 
     // --- Build enriched events ---
     let enriched: EnrichedEvent[] = dbEvents.map(({ event: e, cityCode, earliestClose }) => {
-      const forecast = cityCode ? forecasts[cityCode] ?? null : null;
-      const prediction = predictEvent(e, forecast);
+      const multi = detectMultiCity(e);
+      const prediction = multi
+        ? predictMultiCityEvent(e, forecasts, multi.marketCities)
+        : predictEvent(e, cityCode ? forecasts[cityCode] ?? null : null);
 
       return {
         event: e,

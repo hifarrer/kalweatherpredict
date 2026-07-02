@@ -95,6 +95,8 @@ export type PredictionVerdict = "YES" | "NO" | "UNCERTAIN";
 export interface MarketLikelihood {
   ticker: string;
   probability: number; // 0-1
+  forecastValue?: number; // multi-city: that city's metric value
+  cityCode?: string; // multi-city: the resolved city
 }
 
 export interface PredictionResult {
@@ -106,6 +108,8 @@ export interface PredictionResult {
   unit: string;
   coverage?: number; // fraction of month covered by forecast (0-1) for monthly events
   marketLikelihoods?: MarketLikelihood[]; // probability for every market
+  matchedCount?: number; // multi-city: number of cities forecast to satisfy the threshold
+  multiCity?: boolean; // multi-city: flag for UI rendering
 }
 
 // Enriched event (event + city + forecast + prediction)

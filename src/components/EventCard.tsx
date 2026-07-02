@@ -50,9 +50,37 @@ export default function EventCard({ enriched, forecast }: EventCardProps) {
           )}
         </div>
 
-        {/* Weather chip */}
+        {/* Weather chip / Multi-city summary */}
         <div className="px-4 pb-3">
-          <WeatherChip forecast={forecast} cityLabel={city?.label ?? null} />
+          {prediction?.multiCity && prediction.matchedCount !== undefined ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-500/10 border border-green-500/20 text-xs">
+              <svg
+                className="w-4 h-4 text-green-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+              </svg>
+              <span className="text-kalshi-muted">
+                {prediction.matchedCount} of{" "}
+                {(prediction.marketLikelihoods ?? []).filter((ml) => ml.cityCode).length}{" "}
+                cities forecast match
+              </span>
+            </div>
+          ) : (
+            <WeatherChip forecast={forecast} cityLabel={city?.label ?? null} />
+          )}
         </div>
 
         {/* Divider */}

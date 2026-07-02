@@ -14,7 +14,35 @@ export default function PredictionBadge({ prediction }: PredictionBadgeProps) {
     );
   }
 
-  const { verdict, forecastValue, detail } = prediction;
+  const { verdict, forecastValue, detail, multiCity, matchedCount, marketLikelihoods } =
+    prediction;
+
+  // Multi-city events: show match count instead of single YES/NO verdict
+  if (multiCity && matchedCount !== undefined) {
+    const totalResolved = (marketLikelihoods ?? []).filter((ml) => ml.cityCode).length;
+    const isMatch = matchedCount > 0;
+    return (
+      <div className="flex flex-col gap-1">
+        <div
+          className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold w-fit border ${
+            isMatch
+              ? "bg-kalshi-green/15 border-kalshi-green/40 text-kalshi-green"
+              : "bg-yellow-500/15 border-yellow-500/40 text-yellow-500"
+          }`}
+        >
+          <span
+            className={`inline-block w-2 h-2 rounded-full ${
+              isMatch ? "bg-kalshi-green" : "bg-yellow-500"
+            }`}
+          />
+          {isMatch
+            ? `Forecast: ${matchedCount}/${totalResolved} cities match`
+            : `No cities match (${totalResolved} checked)`}
+        </div>
+        <p className="text-xs text-kalshi-muted">{detail}</p>
+      </div>
+    );
+  }
 
   const config = {
     YES: {

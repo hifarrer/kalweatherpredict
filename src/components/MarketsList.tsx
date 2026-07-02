@@ -17,29 +17,30 @@ export default function MarketsList({
     return <p className="text-xs text-kalshi-muted">No markets available</p>;
   }
 
-  // Build probability lookup map
-  const probMap = new Map<string, number>();
+  // Build likelihood lookup map
+  const llMap = new Map<string, MarketLikelihood>();
   if (marketLikelihoods) {
     for (const ml of marketLikelihoods) {
-      probMap.set(ml.ticker, ml.probability);
+      llMap.set(ml.ticker, ml);
     }
   }
 
-  const hasLikelihoods = probMap.size > 0;
+  const hasLikelihoods = llMap.size > 0;
+  const unit = subcategory === "precipitation" || subcategory === "snowfall" ? "in" : "°F";
 
-  // When we have likelihoods, sort by probability desc and show up to 7.
+  // When we have likelihoods, sort by probability desc and show up to 10.
   // Otherwise fall back to top 5 by 24h volume.
   let top: KalshiMarket[];
   if (hasLikelihoods) {
     top = [...markets]
       .sort((a, b) => {
-        const pa = probMap.get(a.ticker) ?? 0;
-        const pb = probMap.get(b.ticker) ?? 0;
+        const pa = llMap.get(a.ticker)?.probability ?? 0;
+        const pb = llMap.get(b.ticker)?.probability ?? 0;
         if (Math.abs(pa - pb) > 0.001) return pb - pa;
         // Tie-break by volume
         return parseFloat(b.volume_24h_fp || "0") - parseFloat(a.volume_24h_fp || "0");
       })
-      .slice(0, 7);
+      .slice(0, 10);
   } else {
     top = [...markets]
       .sort((a, b) => parseFloat(b.volume_24h_fp || "0") - parseFloat(a.volume_24h_fp || "0"))
@@ -58,7 +59,9 @@ export default function MarketsList({
         const noPrice = parseFloat(m.no_bid_dollars || "0");
         const vol24 = parseFloat(m.volume_24h_fp || "0");
         const strikeLabel = formatStrike(m, subcategory);
-        const prob = probMap.get(m.ticker) ?? 0;
+        const ll = llMap.get(m.ticker);
+        const prob = ll?.probability ?? 0;
+        const fcValue = ll?.forecastValue;
         const highlighted = prob >= HIGHLIGHT_THRESHOLD;
 
         return (
@@ -76,9 +79,16 @@ export default function MarketsList({
             }
           >
             <div className="flex-1 min-w-0">
-              <span className="text-xs text-kalshi-text truncate block">
-                {m.yes_sub_title || m.ticker}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-kalshi-text truncate">
+                  {m.yes_sub_title || m.ticker}
+                </span>
+                {fcValue !== undefined && (
+                  <span className="text-[10px] text-blue-400 font-medium shrink-0">
+                    {fcValue}{unit}
+                  </span>
+                )}
+              </div>
               {strikeLabel && (
                 <span className="text-[10px] text-kalshi-muted">{strikeLabel}</span>
               )}

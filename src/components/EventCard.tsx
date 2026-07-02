@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { EnrichedEvent, WeatherForecast } from "@/types";
 import { CITY_MAP } from "@/lib/cities";
 import { parseDateFromTitle, utcToLocalDateString } from "@/lib/predictor";
@@ -12,11 +12,24 @@ import AiAnalysisModal from "./AiAnalysisModal";
 interface EventCardProps {
   enriched: EnrichedEvent;
   forecast: WeatherForecast | null;
+  /** Called with the refreshed enriched event after a successful per-card refresh. */
+  onRefreshed?: (updated: EnrichedEvent) => void;
 }
 
-export default function EventCard({ enriched, forecast }: EventCardProps) {
+export default function EventCard({ enriched, forecast, onRefreshed }: EventCardProps) {
   const [aiOpen, setAiOpen] = useState(false);
-  const { event, cityCode, prediction, volume24h, earliestClose, opportunityScore } = enriched;
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  // Local copy of enriched data so per-card refresh can update it in-place
+  const [localEnriched, setLocalEnriched] = useState(enriched);
+
+  // Sync from prop when the parent passes new data (e.g. main refresh)
+  useEffect(() => {
+    setLocalEnriched(enriched);
+  }, [enriched]);
+
+  const { event, cityCode, prediction, volume24h, earliestClose, opportunityScore } = localEnriched;
   const city = cityCode ? CITY_MAP[cityCode] : null;
   const kalshiUrl = `https://kalshi.com/markets/${event.series_ticker.toLowerCase()}`;
 
@@ -24,10 +37,39 @@ export default function EventCard({ enriched, forecast }: EventCardProps) {
   const eventDate = parseDateFromTitle(event.title) ??
     (event.strike_date ? utcToLocalDateString(event.strike_date) : null);
 
+  // Fetch fresh market data for this single event directly from Kalshi
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const res = await fetch(
+        `/api/events/${encodeURIComponent(event.event_ticker)}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to refresh (${res.status})`);
+      }
+      const data = await res.json();
+      if (data.event) {
+        setLocalEnriched(data.event);
+        onRefreshed?.(data.event);
+      }
+    } catch (err) {
+      setRefreshError(
+        err instanceof Error ? err.message : "Failed to refresh",
+      );
+    } finally {
+      setRefreshing(false);
+      // Clear error after 5s
+      setTimeout(() => setRefreshError(null), 5000);
+    }
+  };
+
   return (
     <>
       <div className="bg-kalshi-surface border border-kalshi-border rounded-xl overflow-hidden hover:border-white/20 transition-all flex flex-col">
-        {/* Top: Prediction Badge + Opportunity Badge */}
+        {/* Top: Prediction Badge + Opportunity Badge + Per-event Refresh */}
         <div className="p-4 pb-2 flex items-center gap-2 flex-wrap">
           <PredictionBadge prediction={prediction} />
           {opportunityScore != null && opportunityScore > 0 && (
@@ -38,7 +80,36 @@ export default function EventCard({ enriched, forecast }: EventCardProps) {
               Opportunity {opportunityScore}/100
             </span>
           )}
+          {/* Spacer pushes the refresh button to the right */}
+          <div className="flex-1" />
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Refresh market prices for this event"
+            className="p-1 rounded-md text-kalshi-muted hover:text-kalshi-orange hover:bg-white/5 disabled:opacity-40 disabled:cursor-wait transition-colors"
+          >
+            <svg
+              className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+          </button>
         </div>
+
+        {/* Refresh error toast (per-card) */}
+        {refreshError && (
+          <div className="mx-4 mb-1 px-2 py-1 rounded-md bg-kalshi-red/10 border border-kalshi-red/30">
+            <span className="text-[10px] text-kalshi-red">{refreshError}</span>
+          </div>
+        )}
 
         {/* Title */}
         <div className="px-4 pb-2">
@@ -101,7 +172,7 @@ export default function EventCard({ enriched, forecast }: EventCardProps) {
         <div className="p-3 flex-1">
           <MarketsList
             markets={event.markets}
-            subcategory={enriched.subcategory}
+            subcategory={localEnriched.subcategory}
             marketLikelihoods={prediction?.marketLikelihoods}
           />
         </div>

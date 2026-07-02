@@ -130,6 +130,15 @@ export default function HomePage() {
                 key={e.event.event_ticker}
                 enriched={e}
                 forecast={e.cityCode ? forecasts[e.cityCode] ?? null : null}
+                onRefreshed={(updated) =>
+                  setEvents((prev) =>
+                    prev.map((p) =>
+                      p.event.event_ticker === updated.event.event_ticker
+                        ? updated
+                        : p,
+                    ),
+                  )
+                }
               />
             ))}
           </div>

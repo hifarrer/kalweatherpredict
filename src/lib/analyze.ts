@@ -11,9 +11,63 @@ function getClient(): Anthropic {
         "ANTHROPIC_API_KEY is not set. Add it to .env.local and restart the dev server.",
       );
     }
-    client = new Anthropic({ apiKey });
+    client = new Anthropic({
+      apiKey,
+      maxRetries: 5,
+      timeout: 90_000, // 90s – Claude can take a while on complex prompts
+    });
   }
   return client;
+}
+
+/**
+ * Retriable network error signatures.
+ * "Premature close", "fetch failed", ECONNRESET, etc. are transient and
+ * worth retrying with back-off.
+ */
+const RETRIABLE_PATTERNS = [
+  "premature close",
+  "fetch failed",
+  "econnreset",
+  "etimedout",
+  "socket hang up",
+  "undisclosed",
+  "aborted",
+  "network error",
+  "read econnreset",
+];
+
+function isRetriableError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return RETRIABLE_PATTERNS.some((p) => msg.includes(p));
+}
+
+/**
+ * Wraps an async operation with exponential-backoff retries for transient
+ * network failures (the most common cause of "Premature close").
+ */
+async function callWithRetry<T>(
+  fn: () => Promise<T>,
+  maxAttempts = 4,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (!isRetriableError(err) || attempt === maxAttempts) throw err;
+      // Exponential back-off: 1s → 2s → 4s (+ jitter)
+      const delay = Math.pow(2, attempt - 1) * 1000 + Math.random() * 500;
+      console.warn(
+        `Anthropic API transient error (attempt ${attempt}/${maxAttempts}), retrying in ${Math.round(delay)}ms:`,
+        err instanceof Error ? err.message : err,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError;
 }
 
 export function isAiConfigured(): boolean {
@@ -93,12 +147,14 @@ Format your response EXACTLY as this JSON (no markdown fences, no extra text bef
   "factors": ["<factor 1>", "<factor 2>", "<factor 3>"]
 }`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-5",
-    max_tokens: 1024,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userPrompt }],
-  });
+  const response = await callWithRetry(() =>
+    anthropic.messages.create({
+      model: "claude-sonnet-4-5",
+      max_tokens: 1024,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userPrompt }],
+    }),
+  );
 
   const text = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")

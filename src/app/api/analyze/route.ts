@@ -41,8 +41,17 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
+    const rawMessage = err instanceof Error ? err.message : "Unknown error";
     console.error("Analyze API error:", err);
+
+    // Surface a friendlier message for transient network failures
+    const isNetwork = /premature close|fetch failed|econnreset|etimedout|socket hang up|aborted/i.test(
+      rawMessage,
+    );
+    const message = isNetwork
+      ? "The AI service connection was interrupted. Please try again."
+      : rawMessage;
+
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

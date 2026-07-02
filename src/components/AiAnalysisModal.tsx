@@ -106,9 +106,18 @@ export default function AiAnalysisModal({
           )}
 
           {error && (
-            <div className="p-4 rounded-lg bg-kalshi-red/10 border border-kalshi-red/30">
-              <p className="text-sm text-kalshi-red font-medium mb-1">Analysis Error</p>
-              <p className="text-xs text-kalshi-muted">{error}</p>
+            <div className="space-y-3">
+              <div className="p-4 rounded-lg bg-kalshi-red/10 border border-kalshi-red/30">
+                <p className="text-sm text-kalshi-red font-medium mb-1">Analysis Error</p>
+                <p className="text-xs text-kalshi-muted">{error}</p>
+              </div>
+              <button
+                onClick={runAnalysis}
+                disabled={loading}
+                className="w-full py-2 rounded-lg border border-kalshi-border hover:bg-white/5 text-sm text-kalshi-muted hover:text-kalshi-text transition-colors disabled:opacity-50"
+              >
+                Try Again
+              </button>
             </div>
           )}
 

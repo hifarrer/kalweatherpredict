@@ -71,7 +71,7 @@ export function getRelevantForecastIndex(
  * Parse a date string from an event title like "on Jul 1, 2026" or "on July 1".
  * Returns YYYY-MM-DD format, or null if not found.
  */
-function parseDateFromTitle(title: string): string | null {
+export function parseDateFromTitle(title: string): string | null {
   const match = title.match(
     /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s*(\d{4})\b/i,
   );
@@ -95,7 +95,7 @@ function parseDateFromTitle(title: string): string | null {
  * Shifts back ~6 hours to approximate US timezones where close time
  * is typically near midnight local (e.g. 03:59 UTC = 11:59 PM EDT).
  */
-function utcToLocalDateString(utcIso: string): string | null {
+export function utcToLocalDateString(utcIso: string): string | null {
   try {
     const dt = new Date(utcIso);
     const local = new Date(dt.getTime() - 6 * 60 * 60 * 1000);

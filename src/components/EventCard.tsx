@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { EnrichedEvent, WeatherForecast } from "@/types";
 import { CITY_MAP } from "@/lib/cities";
+import { parseDateFromTitle, utcToLocalDateString } from "@/lib/predictor";
 import PredictionBadge from "./PredictionBadge";
 import WeatherChip from "./WeatherChip";
 import MarketsList from "./MarketsList";
@@ -18,6 +19,10 @@ export default function EventCard({ enriched, forecast }: EventCardProps) {
   const { event, cityCode, prediction, volume24h, earliestClose, opportunityScore } = enriched;
   const city = cityCode ? CITY_MAP[cityCode] : null;
   const kalshiUrl = `https://kalshi.com/markets/${event.series_ticker.toLowerCase()}`;
+
+  // Determine the event date for forecast deep-linking
+  const eventDate = parseDateFromTitle(event.title) ??
+    (event.strike_date ? utcToLocalDateString(event.strike_date) : null);
 
   return (
     <>
@@ -79,7 +84,13 @@ export default function EventCard({ enriched, forecast }: EventCardProps) {
               </span>
             </div>
           ) : (
-            <WeatherChip forecast={forecast} cityLabel={city?.label ?? null} />
+            <WeatherChip
+              forecast={forecast}
+              cityLabel={city?.label ?? null}
+              lat={city?.lat}
+              lon={city?.lon}
+              eventDate={eventDate}
+            />
           )}
         </div>
 

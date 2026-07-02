@@ -50,19 +50,33 @@ export default function MarketsList({
   return (
     <div className="space-y-1">
       {hasLikelihoods && (
-        <p className="text-[10px] text-kalshi-muted mb-1">
-          Highlighted by forecast likelihood
-        </p>
+        <div className="flex items-center gap-3 mb-1 text-[10px] text-kalshi-muted">
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-sm bg-kalshi-green" />
+            FC = Forecast
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-sm bg-amber-500" />
+            MK = Kalshi Market
+          </span>
+        </div>
       )}
       {top.map((m) => {
         const yesPrice = parseFloat(m.yes_bid_dollars || "0");
         const noPrice = parseFloat(m.no_bid_dollars || "0");
+        const lastPrice = parseFloat(m.last_price_dollars || "0");
         const vol24 = parseFloat(m.volume_24h_fp || "0");
         const strikeLabel = formatStrike(m, subcategory);
         const ll = llMap.get(m.ticker);
         const prob = ll?.probability ?? 0;
         const fcValue = ll?.forecastValue;
         const highlighted = prob >= HIGHLIGHT_THRESHOLD;
+        // Market-implied probability: prefer last traded price, fall back to bid midpoint
+        const marketProb = lastPrice > 0
+          ? lastPrice
+          : yesPrice > 0
+            ? yesPrice
+            : 0;
 
         return (
           <div
@@ -93,24 +107,40 @@ export default function MarketsList({
                 <span className="text-[10px] text-kalshi-muted">{strikeLabel}</span>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {highlighted && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* Forecast probability badge */}
+              {hasLikelihoods && (
                 <span
                   className="px-1.5 py-0.5 rounded text-[10px] font-bold text-kalshi-green"
-                  style={{ backgroundColor: `rgba(46, 204, 113, ${prob * 0.2})` }}
+                  style={{
+                    backgroundColor: `rgba(46, 204, 113, ${Math.max(0.06, prob * 0.2)})`,
+                    opacity: highlighted ? 1 : 0.55,
+                  }}
+                  title="Forecast-implied probability"
                 >
                   {Math.round(prob * 100)}%
                 </span>
               )}
-              <div className="flex items-center gap-1">
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-kalshi-green/15 text-kalshi-green">
-                  YES {Math.round(yesPrice * 100)}¢
+              {/* Kalshi market-implied probability badge */}
+              <span
+                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-amber-400"
+                style={{
+                  backgroundColor: `rgba(245, 158, 11, ${Math.max(0.06, marketProb * 0.2)})`,
+                }}
+                title="Kalshi market price (last traded)"
+              >
+                {Math.round(marketProb * 100)}%
+              </span>
+              {/* Bid prices */}
+              <div className="flex items-center gap-0.5">
+                <span className="px-1 py-0.5 rounded text-[10px] font-bold bg-kalshi-green/15 text-kalshi-green">
+                  {Math.round(yesPrice * 100)}¢
                 </span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-kalshi-red/15 text-kalshi-red">
-                  NO {Math.round(noPrice * 100)}¢
+                <span className="px-1 py-0.5 rounded text-[10px] font-bold bg-kalshi-red/15 text-kalshi-red">
+                  {Math.round(noPrice * 100)}¢
                 </span>
               </div>
-              <span className="text-[10px] text-kalshi-muted w-14 text-right">
+              <span className="text-[10px] text-kalshi-muted w-12 text-right">
                 {formatVolume(vol24)}
               </span>
             </div>

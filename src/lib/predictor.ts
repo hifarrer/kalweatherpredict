@@ -2,6 +2,7 @@ import {
   DailyForecast,
   KalshiEvent,
   KalshiMarket,
+  MarketLikelihood,
   PredictionResult,
   PredictionVerdict,
   WeatherForecast,
@@ -270,6 +271,103 @@ export function findMatchingBucket(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Per-market probability estimation (for gradient highlighting)
+// ---------------------------------------------------------------------------
+
+/**
+ * Approximation of the error function (Abramowitz & Stegun 7.1.26).
+ * Max error ~1.5×10⁻⁷.
+ */
+function erf(x: number): number {
+  const sign = x >= 0 ? 1 : -1;
+  const ax = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * ax);
+  const y =
+    1 -
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) *
+      t +
+      0.254829592) *
+      t *
+      Math.exp(-ax * ax);
+  return sign * y;
+}
+
+/**
+ * Cumulative distribution function of a normal distribution.
+ * Returns P(X <= x) where X ~ N(mean, std²).
+ */
+function normalCdf(x: number, mean: number, std: number): number {
+  return 0.5 * (1 + erf((x - mean) / (std * Math.SQRT2)));
+}
+
+/**
+ * Forecast uncertainty (standard deviation) per metric.
+ * Represents how much the actual weather value typically deviates from
+ * the forecast point estimate.
+ */
+function forecastStdDev(metric: WeatherMetric): number {
+  switch (metric) {
+    case "temperature_high":
+    case "temperature_low":
+      return 3; // ±3°F
+    case "precipitation":
+      return 0.6; // ±0.6 inches
+    case "snowfall":
+      return 1.5; // ±1.5 inches
+    default:
+      return 3;
+  }
+}
+
+/**
+ * Compute P(market resolves YES) for every market in an event,
+ * given a forecast point estimate.
+ *
+ * Models the actual weather outcome as normally distributed around the
+ * forecast value. Each market's strike condition is then evaluated against
+ * this distribution to produce a probability.
+ */
+export function computeMarketLikelihoods(
+  forecastValue: number,
+  markets: KalshiMarket[],
+  metric: WeatherMetric,
+): MarketLikelihood[] {
+  const sigma = forecastStdDev(metric);
+
+  return markets.map((m) => {
+    const floor = m.floor_strike;
+    const cap = m.cap_strike;
+    let prob = 0;
+
+    switch (m.strike_type) {
+      case "greater":
+      case "greater_or_equal":
+        // P(X >= floor)
+        prob = floor !== null ? 1 - normalCdf(floor, forecastValue, sigma) : 0;
+        break;
+      case "less":
+      case "less_or_equal":
+        // P(X <= cap)
+        prob = cap !== null ? normalCdf(cap, forecastValue, sigma) : 0;
+        break;
+      case "between":
+        // P(floor <= X <= cap)
+        if (floor !== null && cap !== null) {
+          prob = normalCdf(cap, forecastValue, sigma) - normalCdf(floor, forecastValue, sigma);
+        }
+        break;
+      default:
+        prob = 0;
+    }
+
+    // Clamp to [0, 1] (numerical safety)
+    prob = Math.max(0, Math.min(1, prob));
+
+    return { ticker: m.ticker, probability: prob };
+  });
+}
+
 /**
  * Main prediction logic: compare the weather forecast against the event's market strikes.
  *
@@ -315,6 +413,7 @@ export function predictEvent(
 
     const forecastValue = projection.total;
     const coveragePct = `${(projection.coverage * 100).toFixed(0)}%`;
+    const marketLikelihoods = computeMarketLikelihoods(forecastValue, event.markets, metric);
 
     // Strategy 1: Range-bucket markets
     const matchedBucket = findMatchingBucket(forecastValue, event.markets);
@@ -327,6 +426,7 @@ export function predictEvent(
         metric,
         unit,
         coverage: projection.coverage,
+        marketLikelihoods,
       };
     }
 
@@ -342,6 +442,7 @@ export function predictEvent(
       metric,
       unit,
       coverage: projection.coverage,
+      marketLikelihoods,
     };
   }
 
@@ -368,6 +469,8 @@ export function predictEvent(
       break;
   }
 
+  const marketLikelihoods = computeMarketLikelihoods(forecastValue, event.markets, metric);
+
   // Strategy 1: Range-bucket markets
   const matchedBucket = findMatchingBucket(forecastValue, event.markets);
   if (matchedBucket) {
@@ -378,6 +481,7 @@ export function predictEvent(
       detail: `Forecast ${forecastValue}${unit} on ${daily.date} falls in the ${formatRange(matchedBucket, unit)} range.`,
       metric,
       unit,
+      marketLikelihoods,
     };
   }
 
@@ -397,6 +501,7 @@ export function predictEvent(
     detail: `Forecast ${metricLabel} ${forecastValue}${unit} on ${daily.date} vs ${direction}.`,
     metric,
     unit,
+    marketLikelihoods,
   };
 }
 

@@ -60,7 +60,11 @@ export default function EventCard({ enriched, forecast }: EventCardProps) {
 
         {/* Markets */}
         <div className="p-3 flex-1">
-          <MarketsList markets={event.markets} subcategory={enriched.subcategory} />
+          <MarketsList
+            markets={event.markets}
+            subcategory={enriched.subcategory}
+            marketLikelihoods={prediction?.marketLikelihoods}
+          />
         </div>
 
         {/* Footer: stats + actions */}

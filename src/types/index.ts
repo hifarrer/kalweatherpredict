@@ -88,6 +88,15 @@ export interface WeatherForecast {
 
 export type PredictionVerdict = "YES" | "NO" | "UNCERTAIN";
 
+/**
+ * Per-market probability estimate derived from the forecast.
+ * probability is 0-1, representing P(market resolves YES).
+ */
+export interface MarketLikelihood {
+  ticker: string;
+  probability: number; // 0-1
+}
+
 export interface PredictionResult {
   verdict: PredictionVerdict;
   forecastValue: number | null;
@@ -96,6 +105,7 @@ export interface PredictionResult {
   metric: WeatherMetric;
   unit: string;
   coverage?: number; // fraction of month covered by forecast (0-1) for monthly events
+  marketLikelihoods?: MarketLikelihood[]; // probability for every market
 }
 
 // Enriched event (event + city + forecast + prediction)

@@ -92,6 +92,9 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    // --- Filter out events with no liquidity (never traded) ---
+    enriched = enriched.filter((e) => e.volume > 0 || e.volume24h > 0);
+
     // --- Sort ---
     enriched = [...enriched];
     switch (sort) {

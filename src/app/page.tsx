@@ -24,7 +24,9 @@ export default function HomePage() {
     try {
       // Fetch events (predictions are computed server-side)
       const refreshParam = force ? "&refresh=1" : "";
-      const eventsRes = await fetch(`/api/events?sort=${sort}${refreshParam}`);
+      const eventsRes = await fetch(`/api/events?sort=${sort}${refreshParam}`, {
+        cache: "no-store",
+      });
       if (!eventsRes.ok) {
         const errData = await eventsRes.json().catch(() => ({}));
         throw new Error(errData.error || `Failed to load events (${eventsRes.status})`);

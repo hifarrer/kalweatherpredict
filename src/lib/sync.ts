@@ -15,8 +15,10 @@ const FULL_SYNC_INTERVAL_MS = 15 * 60 * 1000; // discover + upsert every 15 min
 const SERIES_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // weather series list cached 6h
 const SCHEDULER_INTERVAL_MS = 10 * 60 * 1000; // background timer fires every 10 min
 
-// In-process lock so overlapping syncs are skipped (e.g. timer + request)
-let isSyncing = false;
+// Promise-based deduplication: concurrent callers share the in-flight sync
+// instead of skipping it. After it completes, force-refresh callers get a
+// fresh sync so the user always sees up-to-date market prices.
+let activeSync: Promise<number> | null = null;
 
 /**
  * Return the set of weather series tickers, backed by the DB (sync_meta).
@@ -82,37 +84,40 @@ export async function expireStaleEvents(): Promise<number> {
 }
 
 /**
- * Run a full sync: page Kalshi for all open weather events and upsert them.
+ * Internal: perform the actual Kalshi API pagination + DB upsert.
  *
- * Guarded by an in-process lock so concurrent callers skip if a sync is
- * already running.
- *
- * Returns the number of events upserted (or 0 if skipped).
+ * Extracted so runFullSync() can handle concurrency/dedup around it.
  */
-export async function runFullSync(): Promise<number> {
-  if (isSyncing) {
-    console.log("[sync] already running — skipping");
-    return 0;
-  }
-  isSyncing = true;
+async function doFullSync(): Promise<number> {
+  console.log("[sync] starting full sync...");
+  const apiEvents = await getWeatherEvents();
+  console.log(`[sync] discovered ${apiEvents.length} weather events from Kalshi`);
 
-  try {
-    console.log("[sync] starting full sync...");
-    const apiEvents = await getWeatherEvents();
-    console.log(`[sync] discovered ${apiEvents.length} weather events from Kalshi`);
+  let upserted = 0;
 
-    let upserted = 0;
+  for (const e of apiEvents) {
+    const primaryRules = e.markets?.[0]?.rules_primary;
+    const city = detectCity(e.title, e.series_ticker, primaryRules);
+    const cityCode = city?.code ?? null;
+    const earliestClose = computeEarliestClose(e.markets) || null;
 
-    for (const e of apiEvents) {
-      const primaryRules = e.markets?.[0]?.rules_primary;
-      const city = detectCity(e.title, e.series_ticker, primaryRules);
-      const cityCode = city?.code ?? null;
-      const earliestClose = computeEarliestClose(e.markets) || null;
-
-      await db
-        .insert(events)
-        .values({
-          eventTicker: e.event_ticker,
+    await db
+      .insert(events)
+      .values({
+        eventTicker: e.event_ticker,
+        seriesTicker: e.series_ticker,
+        title: e.title,
+        subTitle: e.sub_title || null,
+        category: e.category || null,
+        strikeDate: e.strike_date || null,
+        cityCode,
+        status: "open",
+        data: e as unknown as Record<string, unknown>,
+        earliestClose,
+      })
+      .onConflictDoUpdate({
+        target: events.eventTicker,
+        set: {
           seriesTicker: e.series_ticker,
           title: e.title,
           subTitle: e.sub_title || null,
@@ -122,47 +127,69 @@ export async function runFullSync(): Promise<number> {
           status: "open",
           data: e as unknown as Record<string, unknown>,
           earliestClose,
-        })
-        .onConflictDoUpdate({
-          target: events.eventTicker,
-          set: {
-            seriesTicker: e.series_ticker,
-            title: e.title,
-            subTitle: e.sub_title || null,
-            category: e.category || null,
-            strikeDate: e.strike_date || null,
-            cityCode,
-            status: "open",
-            data: e as unknown as Record<string, unknown>,
-            earliestClose,
-            lastUpdatedAt: new Date(),
-          },
-        });
-
-      upserted++;
-    }
-
-    // Expire any events that have closed since the last sync
-    const expiredCount = await expireStaleEvents();
-
-    // Record the sync time
-    await db
-      .insert(syncMeta)
-      .values({ key: "last_full_sync_at", value: { ts: Date.now() } })
-      .onConflictDoUpdate({
-        target: syncMeta.key,
-        set: { value: { ts: Date.now() }, updatedAt: new Date() },
+          lastUpdatedAt: new Date(),
+        },
       });
 
-    console.log(
-      `[sync] done — upserted ${upserted}, expired ${expiredCount}`,
-    );
-    return upserted;
+    upserted++;
+  }
+
+  // Expire any events that have closed since the last sync
+  const expiredCount = await expireStaleEvents();
+
+  // Record the sync time
+  await db
+    .insert(syncMeta)
+    .values({ key: "last_full_sync_at", value: { ts: Date.now() } })
+    .onConflictDoUpdate({
+      target: syncMeta.key,
+      set: { value: { ts: Date.now() }, updatedAt: new Date() },
+    });
+
+  console.log(
+    `[sync] done — upserted ${upserted}, expired ${expiredCount}`,
+  );
+  return upserted;
+}
+
+/**
+ * Run a full sync: page Kalshi for all open weather events and upsert them.
+ *
+ * Uses promise-based deduplication so that:
+ * 1. If a sync is already in-flight, new callers AWAIT it (instead of
+ *    skipping) so they always get the freshest available data.
+ * 2. After the in-flight sync completes, the caller starts a NEW sync to
+ *    guarantee it sees the very latest market prices (critical for the
+ *    manual "Refresh" button).
+ * 3. Multiple concurrent callers are deduplicated — they share the
+ *    same promise.
+ */
+export async function runFullSync(): Promise<number> {
+  // Wait for any existing sync to finish so we don't lose its results
+  if (activeSync) {
+    await activeSync;
+  }
+
+  // Another caller may have started a sync while we were awaiting above.
+  // If so, piggyback on it instead of starting a duplicate.
+  if (activeSync) {
+    return activeSync;
+  }
+
+  const promise = doFullSync();
+  activeSync = promise;
+
+  try {
+    return await promise;
   } catch (err) {
     console.error("[sync] full sync failed:", err);
     return 0;
   } finally {
-    isSyncing = false;
+    // Only clear if we're still the active sync (another caller may have
+    // already replaced it).
+    if (activeSync === promise) {
+      activeSync = null;
+    }
   }
 }
 

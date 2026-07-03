@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { EnrichedEvent, WeatherForecast } from "@/types";
 import { CITY_MAP } from "@/lib/cities";
 import { buildKalshiEventUrl } from "@/lib/kalshi";
-import { parseDateFromTitle, utcToLocalDateString } from "@/lib/predictor";
+import { getEventLocalDate } from "@/lib/eventDate";
 import PredictionBadge from "./PredictionBadge";
 import WeatherChip from "./WeatherChip";
 import MarketsList from "./MarketsList";
@@ -47,8 +47,7 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
   // Uses the city's timezone when converting UTC timestamps so that
   // a strike_date like "2026-07-03T03:59:00Z" correctly maps to the
   // local date (Jul 2 in CDT) rather than the UTC date (Jul 3).
-  const eventDate = parseDateFromTitle(event.title) ??
-    (event.strike_date ? utcToLocalDateString(event.strike_date, city?.timezone) : null);
+  const eventDate = getEventLocalDate(localEnriched);
 
   // Fetch fresh market data for this single event directly from Kalshi
   const handleRefresh = async () => {

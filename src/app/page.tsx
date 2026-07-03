@@ -8,13 +8,19 @@ import SortControls from "@/components/SortControls";
 import SubcategoryFilter, {
   SubcategoryFilterValue,
 } from "@/components/SubcategoryFilter";
+import DateFilter from "@/components/DateFilter";
 import EventCard from "@/components/EventCard";
+import {
+  DateFilterValue,
+  bucketEventByDate,
+} from "@/lib/eventDate";
 
 export default function HomePage() {
   const [events, setEvents] = useState<EnrichedEvent[]>([]);
   const [forecasts, setForecasts] = useState<Record<string, WeatherForecast>>({});
   const [sort, setSort] = useState<SortMode>("opportunity");
   const [subcategory, setSubcategory] = useState<SubcategoryFilterValue>("all");
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,11 +81,36 @@ export default function HomePage() {
     return counts;
   }, [events]);
 
-  // Filter events by selected subcategory
+  // Count events per date period (Today / Tomorrow / Future)
+  const dateCounts = useMemo(() => {
+    const counts: Record<DateFilterValue, number> = {
+      all: events.length,
+      today: 0,
+      tomorrow: 0,
+      future: 0,
+    };
+    for (const e of events) {
+      const bucket = bucketEventByDate(e);
+      if (bucket === "today" || bucket === "tomorrow" || bucket === "future") {
+        counts[bucket] += 1;
+      }
+    }
+    return counts;
+  }, [events]);
+
+  // Filter events by selected subcategory and date period
   const filteredEvents = useMemo(() => {
-    if (subcategory === "all") return events;
-    return events.filter((e) => (e.subcategory || "unknown") === subcategory);
-  }, [events, subcategory]);
+    return events.filter((e) => {
+      if (subcategory !== "all" && (e.subcategory || "unknown") !== subcategory) {
+        return false;
+      }
+      if (dateFilter !== "all") {
+        const bucket = bucketEventByDate(e);
+        if (bucket !== dateFilter) return false;
+      }
+      return true;
+    });
+  }, [events, subcategory, dateFilter]);
 
   return (
     <div className="min-h-screen">
@@ -102,7 +133,12 @@ export default function HomePage() {
         <SortControls sort={sort} onSortChange={setSort} eventCount={filteredEvents.length} />
 
         {events.length > 0 && (
-          <div className="mb-6">
+          <div className="mb-6 flex flex-col gap-3">
+            <DateFilter
+              value={dateFilter}
+              onChange={setDateFilter}
+              counts={dateCounts}
+            />
             <SubcategoryFilter
               value={subcategory}
               onChange={setSubcategory}
@@ -118,9 +154,9 @@ export default function HomePage() {
           </div>
         ) : filteredEvents.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 gap-2 text-center">
-            <p className="text-lg font-semibold text-kalshi-text">No events in this category</p>
+            <p className="text-lg font-semibold text-kalshi-text">No events match your filters</p>
             <p className="text-sm text-kalshi-muted">
-              Try selecting a different filter.
+              Try selecting a different date period or category.
             </p>
           </div>
         ) : (

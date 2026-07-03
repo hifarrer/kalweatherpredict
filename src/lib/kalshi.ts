@@ -155,6 +155,27 @@ export function computeEarliestClose(markets: KalshiMarket[] | undefined): strin
 export type SortMode = "trending" | "volume" | "expiration" | "opportunity" | "edge";
 
 /**
+ * Web URL for an event on kalshi.com.
+ *
+ * Kalshi's current URL scheme is /markets/{series}/{slug}/{event_ticker};
+ * the old /markets/{event_ticker} form 404s. The slug segment is cosmetic —
+ * Kalshi 301s any slug to the canonical one (verified live) — so we use a
+ * slugified event title.
+ */
+export function buildKalshiEventUrl(event: {
+  series_ticker: string;
+  event_ticker: string;
+  title?: string;
+}): string {
+  const slug =
+    (event.title || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "market";
+  return `https://kalshi.com/markets/${event.series_ticker.toLowerCase()}/${slug}/${event.event_ticker.toLowerCase()}`;
+}
+
+/**
  * Extra safety filter: verify the event title looks weather-related.
  * Prevents false positives from series that are loosely categorized.
  */

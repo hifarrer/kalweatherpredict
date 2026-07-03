@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { EnrichedEvent, WeatherForecast } from "@/types";
 import { CITY_MAP } from "@/lib/cities";
+import { buildKalshiEventUrl } from "@/lib/kalshi";
 import { parseDateFromTitle, utcToLocalDateString } from "@/lib/predictor";
 import PredictionBadge from "./PredictionBadge";
 import WeatherChip from "./WeatherChip";
@@ -40,7 +41,7 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
 
   const { event, cityCode, prediction, volume24h, earliestClose, opportunityScore } = localEnriched;
   const city = cityCode ? CITY_MAP[cityCode] : null;
-  const kalshiUrl = `https://kalshi.com/markets/${event.event_ticker.toLowerCase()}`;
+  const kalshiUrl = buildKalshiEventUrl(event);
 
   // Determine the event date for forecast deep-linking.
   // Uses the city's timezone when converting UTC timestamps so that

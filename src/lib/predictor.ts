@@ -26,14 +26,15 @@ export function getPrimaryMarket(markets: KalshiMarket[] | undefined): KalshiMar
  * Priority order (first match wins):
  * 1. Date parsed from the event title (e.g. "on Jul 1, 2026") — most reliable,
  *    it's the human-readable local date the event is about.
- * 2. Event's strike_date, converted from UTC to local (avoids off-by-one).
- * 3. Market close_time, converted from UTC to local.
+ * 2. Event's strike_date, converted from UTC to the city's local timezone.
+ * 3. Market close_time, converted from UTC to the city's local timezone.
  * 4. Fallback: today.
  */
 export function getRelevantForecastIndex(
   forecast: WeatherForecast,
   event: KalshiEvent,
   market: KalshiMarket,
+  timezone?: string,
 ): number {
   if (forecast.daily.length === 0) return 0;
 
@@ -45,15 +46,15 @@ export function getRelevantForecastIndex(
     candidates.push(titleDate);
   }
 
-  // 2. Event's strike_date (convert UTC to local to avoid off-by-one)
+  // 2. Event's strike_date (convert UTC to local timezone to avoid off-by-one)
   if (event.strike_date) {
-    const localDate = utcToLocalDateString(event.strike_date);
+    const localDate = utcToLocalDateString(event.strike_date, timezone);
     if (localDate) candidates.push(localDate);
   }
 
-  // 3. Market close_time (shift to local date using UTC offset)
+  // 3. Market close_time (convert to local timezone date)
   if (market.close_time) {
-    const localDate = utcToLocalDateString(market.close_time);
+    const localDate = utcToLocalDateString(market.close_time, timezone);
     if (localDate) candidates.push(localDate);
   }
 
@@ -91,13 +92,33 @@ export function parseDateFromTitle(title: string): string | null {
 }
 
 /**
- * Convert a UTC ISO timestamp to a local date string.
- * Shifts back ~6 hours to approximate US timezones where close time
- * is typically near midnight local (e.g. 03:59 UTC = 11:59 PM EDT).
+ * Convert a UTC ISO timestamp to a local date string (YYYY-MM-DD)
+ * using the given IANA timezone.
+ *
+ * This correctly handles DST and per-city timezone offsets, unlike the
+ * old hardcoded 6-hour shift. For example, a Kalshi close_time of
+ * "2026-07-03T05:59:00Z" represents 12:59 AM CDT on July 3, which is
+ * the settlement window after an 11:59 PM ET last-trade on July 2.
+ *
+ * Falls back to a 6-hour shift if no timezone is provided (legacy behavior).
  */
-export function utcToLocalDateString(utcIso: string): string | null {
+export function utcToLocalDateString(
+  utcIso: string,
+  timezone?: string,
+): string | null {
   try {
     const dt = new Date(utcIso);
+    if (timezone) {
+      // Use Intl.DateTimeFormat to get the calendar date in the target tz.
+      // The en-CA locale produces YYYY-MM-DD which is what we need.
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(dt);
+    }
+    // Legacy fallback: approximate US timezones with a 6-hour shift
     const local = new Date(dt.getTime() - 6 * 60 * 60 * 1000);
     return local.toISOString().split("T")[0];
   } catch {
@@ -389,6 +410,7 @@ export function computeMarketLikelihoods(
 export function predictEvent(
   event: KalshiEvent,
   forecast: WeatherForecast | null,
+  timezone?: string,
 ): PredictionResult | null {
   if (!forecast || !event.markets || event.markets.length === 0) return null;
 
@@ -458,7 +480,7 @@ export function predictEvent(
   }
 
   // Single-day events (temperature or daily precipitation)
-  const forecastIdx = getRelevantForecastIndex(forecast, event, primary);
+  const forecastIdx = getRelevantForecastIndex(forecast, event, primary, timezone);
   const daily = forecast.daily[forecastIdx];
   if (!daily) return null;
 
@@ -573,8 +595,8 @@ export function predictMultiCityEvent(
 
     totalResolved++;
 
-    // Find the relevant forecast day for this city
-    const forecastIdx = getRelevantForecastIndex(forecast, event, m);
+    // Find the relevant forecast day for this city (using city's timezone)
+    const forecastIdx = getRelevantForecastIndex(forecast, event, m, mc.city?.timezone);
     const daily = forecast.daily[forecastIdx];
     if (!daily) {
       marketLikelihoods.push({ ticker: m.ticker, probability: 0, cityCode });

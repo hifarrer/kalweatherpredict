@@ -53,6 +53,7 @@ export interface CityInfo {
   lat: number;
   lon: number;
   keywords: string[];
+  timezone: string; // IANA timezone identifier, e.g. "America/Chicago"
 }
 
 export interface DailyForecast {

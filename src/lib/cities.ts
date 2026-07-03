@@ -9,6 +9,7 @@ export const CITIES: CityInfo[] = [
     lat: 40.7128,
     lon: -74.006,
     keywords: ["new york", "nyc", "central park", "manhattan", "la guardia", "laguardia", "jfk", "newark"],
+    timezone: "America/New_York",
   },
   {
     code: "CHI",
@@ -16,6 +17,7 @@ export const CITIES: CityInfo[] = [
     lat: 41.8781,
     lon: -87.6298,
     keywords: ["chicago", "o'hare", "ohare", "midway"],
+    timezone: "America/Chicago",
   },
   {
     code: "LAX",
@@ -23,6 +25,7 @@ export const CITIES: CityInfo[] = [
     lat: 34.0522,
     lon: -118.2437,
     keywords: ["los angeles", "la ", "lax", "hollywood", "burbank"],
+    timezone: "America/Los_Angeles",
   },
   {
     code: "MIA",
@@ -30,6 +33,7 @@ export const CITIES: CityInfo[] = [
     lat: 25.7617,
     lon: -80.1918,
     keywords: ["miami", "miami-dade", "homestead"],
+    timezone: "America/New_York",
   },
   {
     code: "HOU",
@@ -37,6 +41,7 @@ export const CITIES: CityInfo[] = [
     lat: 29.7604,
     lon: -95.3698,
     keywords: ["houston", "bush", "iah", "hobby"],
+    timezone: "America/Chicago",
   },
   {
     code: "PHX",
@@ -44,6 +49,7 @@ export const CITIES: CityInfo[] = [
     lat: 33.4484,
     lon: -112.074,
     keywords: ["phoenix", "sky harbor"],
+    timezone: "America/Phoenix",
   },
   {
     code: "DAL",
@@ -51,6 +57,7 @@ export const CITIES: CityInfo[] = [
     lat: 32.7767,
     lon: -96.797,
     keywords: ["dallas", "dfw", "fort worth", "love field"],
+    timezone: "America/Chicago",
   },
   {
     code: "ATL",
@@ -58,6 +65,7 @@ export const CITIES: CityInfo[] = [
     lat: 33.749,
     lon: -84.388,
     keywords: ["atlanta", "hartsfield"],
+    timezone: "America/New_York",
   },
   {
     code: "DEN",
@@ -65,6 +73,7 @@ export const CITIES: CityInfo[] = [
     lat: 39.7392,
     lon: -104.9903,
     keywords: ["denver", "stapleton", "dia"],
+    timezone: "America/Denver",
   },
   {
     code: "SEA",
@@ -72,6 +81,7 @@ export const CITIES: CityInfo[] = [
     lat: 47.6062,
     lon: -122.3321,
     keywords: ["seattle", "seatac", "sea-tac", "boeing field"],
+    timezone: "America/Los_Angeles",
   },
   {
     code: "BOS",
@@ -79,6 +89,7 @@ export const CITIES: CityInfo[] = [
     lat: 42.3601,
     lon: -71.0589,
     keywords: ["boston", "logans", "logan international"],
+    timezone: "America/New_York",
   },
   {
     code: "PHL",
@@ -86,6 +97,7 @@ export const CITIES: CityInfo[] = [
     lat: 39.9526,
     lon: -75.1652,
     keywords: ["philadelphia", "philly", "phl"],
+    timezone: "America/New_York",
   },
   {
     code: "DC",
@@ -93,6 +105,7 @@ export const CITIES: CityInfo[] = [
     lat: 38.9072,
     lon: -77.0369,
     keywords: ["washington dc", "washington d.c.", "dca", "reagan", "dulles", "baltimore", "bwi"],
+    timezone: "America/New_York",
   },
   {
     code: "SFO",
@@ -100,6 +113,7 @@ export const CITIES: CityInfo[] = [
     lat: 37.7749,
     lon: -122.4194,
     keywords: ["san francisco", "sfo", "bay area", "oakland", "sfo "],
+    timezone: "America/Los_Angeles",
   },
   {
     code: "LAS",
@@ -107,6 +121,7 @@ export const CITIES: CityInfo[] = [
     lat: 36.1699,
     lon: -115.1398,
     keywords: ["las vegas", "vegas", "mccarran", "harry reid"],
+    timezone: "America/Los_Angeles",
   },
   {
     code: "MSP",
@@ -114,6 +129,7 @@ export const CITIES: CityInfo[] = [
     lat: 44.9778,
     lon: -93.265,
     keywords: ["minneapolis", "twin cities", "st. paul", "saint paul", "msp"],
+    timezone: "America/Chicago",
   },
   {
     code: "DTW",
@@ -121,6 +137,7 @@ export const CITIES: CityInfo[] = [
     lat: 42.3314,
     lon: -83.0458,
     keywords: ["detroit", "dtw", "wayne county"],
+    timezone: "America/Detroit",
   },
   {
     code: "SAT",
@@ -128,6 +145,7 @@ export const CITIES: CityInfo[] = [
     lat: 29.4241,
     lon: -98.4936,
     keywords: ["san antonio", "sat"],
+    timezone: "America/Chicago",
   },
   {
     code: "AUS",
@@ -135,6 +153,7 @@ export const CITIES: CityInfo[] = [
     lat: 30.2672,
     lon: -97.7431,
     keywords: ["austin", "aus", "bergstrom", "austin-bergstrom"],
+    timezone: "America/Chicago",
   },
   {
     code: "BNA",
@@ -142,6 +161,7 @@ export const CITIES: CityInfo[] = [
     lat: 36.1627,
     lon: -86.7816,
     keywords: ["nashville", "bna", "music city"],
+    timezone: "America/Chicago",
   },
   {
     code: "CLT",
@@ -149,6 +169,7 @@ export const CITIES: CityInfo[] = [
     lat: 35.2271,
     lon: -80.8431,
     keywords: ["charlotte", "clt", "charlotte douglas"],
+    timezone: "America/New_York",
   },
   {
     code: "MCO",
@@ -156,6 +177,7 @@ export const CITIES: CityInfo[] = [
     lat: 28.5383,
     lon: -81.3792,
     keywords: ["orlando", "mco"],
+    timezone: "America/New_York",
   },
   {
     code: "TPA",
@@ -163,6 +185,7 @@ export const CITIES: CityInfo[] = [
     lat: 27.9506,
     lon: -82.4572,
     keywords: ["tampa", "tpa", "tampa bay"],
+    timezone: "America/New_York",
   },
   {
     code: "JAX",
@@ -170,6 +193,7 @@ export const CITIES: CityInfo[] = [
     lat: 30.3322,
     lon: -81.6557,
     keywords: ["jacksonville", "jax"],
+    timezone: "America/New_York",
   },
   {
     code: "MEM",
@@ -177,6 +201,7 @@ export const CITIES: CityInfo[] = [
     lat: 35.1495,
     lon: -90.049,
     keywords: ["memphis", "mem"],
+    timezone: "America/Chicago",
   },
   {
     code: "MSY",
@@ -184,6 +209,7 @@ export const CITIES: CityInfo[] = [
     lat: 29.9511,
     lon: -90.0715,
     keywords: ["new orleans", "msy", "nola", "louis armstrong"],
+    timezone: "America/Chicago",
   },
   {
     code: "MCI",
@@ -191,6 +217,7 @@ export const CITIES: CityInfo[] = [
     lat: 39.0997,
     lon: -94.5786,
     keywords: ["kansas city", "mci", "kci"],
+    timezone: "America/Chicago",
   },
   {
     code: "CLE",
@@ -198,6 +225,7 @@ export const CITIES: CityInfo[] = [
     lat: 41.4993,
     lon: -81.6944,
     keywords: ["cleveland", "cle", "hopkins"],
+    timezone: "America/New_York",
   },
   {
     code: "CMH",
@@ -205,6 +233,7 @@ export const CITIES: CityInfo[] = [
     lat: 39.9612,
     lon: -82.9988,
     keywords: ["columbus", "cmh", "port columbus"],
+    timezone: "America/New_York",
   },
   {
     code: "CVG",
@@ -212,6 +241,7 @@ export const CITIES: CityInfo[] = [
     lat: 39.1031,
     lon: -84.512,
     keywords: ["cincinnati", "cvg", "northern kentucky"],
+    timezone: "America/New_York",
   },
   {
     code: "PIT",
@@ -219,6 +249,7 @@ export const CITIES: CityInfo[] = [
     lat: 40.4406,
     lon: -79.9959,
     keywords: ["pittsburgh", "pit"],
+    timezone: "America/New_York",
   },
   {
     code: "STL",
@@ -226,6 +257,7 @@ export const CITIES: CityInfo[] = [
     lat: 38.627,
     lon: -90.1994,
     keywords: ["st. louis", "st louis", "saint louis", "stl", "lambert"],
+    timezone: "America/Chicago",
   },
   {
     code: "MKE",
@@ -233,6 +265,7 @@ export const CITIES: CityInfo[] = [
     lat: 43.0389,
     lon: -87.9065,
     keywords: ["milwaukee", "mke", "mitchell"],
+    timezone: "America/Chicago",
   },
   {
     code: "SLC",
@@ -240,6 +273,7 @@ export const CITIES: CityInfo[] = [
     lat: 40.7608,
     lon: -111.891,
     keywords: ["salt lake city", "slc", "salt lake"],
+    timezone: "America/Denver",
   },
   {
     code: "SMF",
@@ -247,6 +281,7 @@ export const CITIES: CityInfo[] = [
     lat: 38.5816,
     lon: -121.4944,
     keywords: ["sacramento", "smf"],
+    timezone: "America/Los_Angeles",
   },
   {
     code: "SAN",
@@ -254,6 +289,7 @@ export const CITIES: CityInfo[] = [
     lat: 32.7157,
     lon: -117.1611,
     keywords: ["san diego", "lindbergh"],
+    timezone: "America/Los_Angeles",
   },
   {
     code: "TUS",
@@ -261,6 +297,7 @@ export const CITIES: CityInfo[] = [
     lat: 32.2226,
     lon: -110.9747,
     keywords: ["tucson", "tus"],
+    timezone: "America/Phoenix",
   },
   {
     code: "ELP",
@@ -268,6 +305,7 @@ export const CITIES: CityInfo[] = [
     lat: 31.7619,
     lon: -106.485,
     keywords: ["el paso", "elp"],
+    timezone: "America/Denver",
   },
   {
     code: "RDU",
@@ -275,6 +313,7 @@ export const CITIES: CityInfo[] = [
     lat: 35.7796,
     lon: -78.6382,
     keywords: ["raleigh", "rdu", "raleigh-durham", "durham"],
+    timezone: "America/New_York",
   },
   {
     code: "IND",
@@ -282,6 +321,7 @@ export const CITIES: CityInfo[] = [
     lat: 39.7684,
     lon: -86.1581,
     keywords: ["indianapolis", "ind", "indy"],
+    timezone: "America/New_York",
   },
   {
     code: "LON",
@@ -289,6 +329,7 @@ export const CITIES: CityInfo[] = [
     lat: 51.5074,
     lon: -0.1278,
     keywords: ["london", "heathrow"],
+    timezone: "Europe/London",
   },
   {
     code: "TYO",
@@ -296,6 +337,7 @@ export const CITIES: CityInfo[] = [
     lat: 35.6762,
     lon: 139.6503,
     keywords: ["tokyo", "narita", "haneda"],
+    timezone: "Asia/Tokyo",
   },
 ];
 

@@ -61,7 +61,7 @@ export async function GET(
     // 4. Compute prediction
     const prediction = multi
       ? predictMultiCityEvent(event, forecasts, multi.marketCities)
-      : predictEvent(event, cityCode ? forecasts[cityCode] ?? null : null);
+      : predictEvent(event, cityCode ? forecasts[cityCode] ?? null : null, cityCode ? CITY_MAP[cityCode]?.timezone : undefined);
 
     // 5. Build enriched event
     const earliestClose = computeEarliestClose(event.markets);

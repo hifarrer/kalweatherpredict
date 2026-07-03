@@ -31,11 +31,14 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
 
   const { event, cityCode, prediction, volume24h, earliestClose, opportunityScore } = localEnriched;
   const city = cityCode ? CITY_MAP[cityCode] : null;
-  const kalshiUrl = `https://kalshi.com/markets/${event.series_ticker.toLowerCase()}`;
+  const kalshiUrl = `https://kalshi.com/markets/${event.event_ticker.toLowerCase()}`;
 
-  // Determine the event date for forecast deep-linking
+  // Determine the event date for forecast deep-linking.
+  // Uses the city's timezone when converting UTC timestamps so that
+  // a strike_date like "2026-07-03T03:59:00Z" correctly maps to the
+  // local date (Jul 2 in CDT) rather than the UTC date (Jul 3).
   const eventDate = parseDateFromTitle(event.title) ??
-    (event.strike_date ? utcToLocalDateString(event.strike_date) : null);
+    (event.strike_date ? utcToLocalDateString(event.strike_date, city?.timezone) : null);
 
   // Fetch fresh market data for this single event directly from Kalshi
   const handleRefresh = async () => {
@@ -183,7 +186,7 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
           <div className="flex items-center justify-between text-[10px] text-kalshi-muted">
             <span>24h Vol: {formatVolume(volume24h)}</span>
             {earliestClose && (
-              <span>Closes: {formatDate(earliestClose)}</span>
+              <span>Closes: {formatDate(earliestClose, city?.timezone)}</span>
             )}
           </div>
 
@@ -230,10 +233,14 @@ function formatVolume(vol: number): string {
   return String(Math.round(vol));
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, timezone?: string): string {
   try {
     const d = new Date(iso);
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      ...(timezone ? { timeZone: timezone } : {}),
+    });
   } catch {
     return iso.split("T")[0];
   }

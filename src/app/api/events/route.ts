@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
       const multi = detectMultiCity(e);
       const prediction = multi
         ? predictMultiCityEvent(e, forecasts, multi.marketCities)
-        : predictEvent(e, cityCode ? forecasts[cityCode] ?? null : null);
+        : predictEvent(e, cityCode ? forecasts[cityCode] ?? null : null, cityCode ? CITY_MAP[cityCode]?.timezone : undefined);
 
       return {
         event: e,

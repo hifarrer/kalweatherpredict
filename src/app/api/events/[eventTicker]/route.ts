@@ -1,19 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  computeEventVolume,
-  computeEventVolume24h,
-  computeEarliestClose,
-  getEvent,
-} from "@/lib/kalshi";
-import { CITY_MAP, detectMultiCity, detectCity } from "@/lib/cities";
-import { getForecastsForCities } from "@/lib/weather";
-import {
-  predictEvent,
-  predictMultiCityEvent,
-  computeOpportunityScore,
-  detectMetric,
-} from "@/lib/predictor";
-import { EnrichedEvent } from "@/types";
+import { getEvent } from "@/lib/kalshi";
+import { detectCity } from "@/lib/cities";
+import { enrichSingleEvent } from "@/lib/enrich";
 import { db } from "@/db/client";
 import { events } from "@/db/schema";
 
@@ -39,44 +27,14 @@ export async function GET(
       return NextResponse.json({ error: "Event not found on Kalshi" }, { status: 404 });
     }
 
-    // 2. Detect city/cities and collect codes for forecast
+    // 2. Detect the city, then enrich (forecast + prediction)
     const primaryRules = event.markets?.[0]?.rules_primary;
     const city = detectCity(event.title, event.series_ticker, primaryRules);
     const cityCode = city?.code ?? null;
 
-    const multi = detectMultiCity(event);
+    const enriched = await enrichSingleEvent(event, cityCode);
 
-    const cityCodesNeeded: string[] = [];
-    if (multi) {
-      for (const c of multi.cities) {
-        if (!cityCodesNeeded.includes(c.code)) cityCodesNeeded.push(c.code);
-      }
-    } else if (cityCode) {
-      cityCodesNeeded.push(cityCode);
-    }
-
-    // 3. Fetch forecasts
-    const forecasts = await getForecastsForCities(cityCodesNeeded, CITY_MAP);
-
-    // 4. Compute prediction
-    const prediction = multi
-      ? predictMultiCityEvent(event, forecasts, multi.marketCities)
-      : predictEvent(event, cityCode ? forecasts[cityCode] ?? null : null, cityCode ? CITY_MAP[cityCode]?.timezone : undefined);
-
-    // 5. Build enriched event
-    const earliestClose = computeEarliestClose(event.markets);
-    const enriched: EnrichedEvent = {
-      event,
-      cityCode,
-      volume: computeEventVolume(event.markets),
-      volume24h: computeEventVolume24h(event.markets),
-      earliestClose,
-      prediction,
-      opportunityScore: computeOpportunityScore(event, prediction),
-      subcategory: detectMetric(event),
-    };
-
-    // 6. Upsert fresh data into DB (fire-and-forget, non-blocking)
+    // 3. Upsert fresh data into DB (fire-and-forget, non-blocking)
     db
       .insert(events)
       .values({
@@ -89,7 +47,7 @@ export async function GET(
         cityCode,
         status: "open",
         data: event as unknown as Record<string, unknown>,
-        earliestClose: earliestClose || null,
+        earliestClose: enriched.earliestClose || null,
       })
       .onConflictDoUpdate({
         target: events.eventTicker,
@@ -102,7 +60,7 @@ export async function GET(
           cityCode,
           status: "open",
           data: event as unknown as Record<string, unknown>,
-          earliestClose: earliestClose || null,
+          earliestClose: enriched.earliestClose || null,
           lastUpdatedAt: new Date(),
         },
       })

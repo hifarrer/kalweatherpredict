@@ -10,6 +10,13 @@ export const CITIES: CityInfo[] = [
     lon: -74.006,
     keywords: ["new york", "nyc", "central park", "manhattan", "la guardia", "laguardia", "jfk", "newark"],
     timezone: "America/New_York",
+    station: {
+      id: "KNYC",
+      name: "Central Park",
+      lat: 40.7789,
+      lon: -73.9692,
+      aliases: ["central park"],
+    },
   },
   {
     code: "CHI",
@@ -18,14 +25,30 @@ export const CITIES: CityInfo[] = [
     lon: -87.6298,
     keywords: ["chicago", "o'hare", "ohare", "midway"],
     timezone: "America/Chicago",
+    station: {
+      id: "KMDW",
+      name: "Chicago Midway",
+      lat: 41.7861,
+      lon: -87.7522,
+      aliases: ["midway"],
+    },
   },
   {
     code: "LAX",
     label: "Los Angeles",
     lat: 34.0522,
     lon: -118.2437,
-    keywords: ["los angeles", "la ", "lax", "hollywood", "burbank"],
+    // NOTE: no bare "la" — it collides with the Louisiana state abbreviation
+    // in rules text like "New Orleans, LA"
+    keywords: ["los angeles", "lax", "hollywood", "burbank"],
     timezone: "America/Los_Angeles",
+    station: {
+      id: "KLAX",
+      name: "Los Angeles Intl Airport",
+      lat: 33.9382,
+      lon: -118.3866,
+      aliases: ["los angeles airport", "los angeles international"],
+    },
   },
   {
     code: "MIA",
@@ -34,6 +57,13 @@ export const CITIES: CityInfo[] = [
     lon: -80.1918,
     keywords: ["miami", "miami-dade", "homestead"],
     timezone: "America/New_York",
+    station: {
+      id: "KMIA",
+      name: "Miami Intl Airport",
+      lat: 25.7906,
+      lon: -80.3164,
+      aliases: ["miami international"],
+    },
   },
   {
     code: "HOU",
@@ -42,6 +72,13 @@ export const CITIES: CityInfo[] = [
     lon: -95.3698,
     keywords: ["houston", "bush", "iah", "hobby"],
     timezone: "America/Chicago",
+    station: {
+      id: "KIAH",
+      name: "Houston Intercontinental",
+      lat: 29.9844,
+      lon: -95.3414,
+      aliases: ["bush intercontinental", "intercontinental"],
+    },
   },
   {
     code: "PHX",
@@ -50,6 +87,13 @@ export const CITIES: CityInfo[] = [
     lon: -112.074,
     keywords: ["phoenix", "sky harbor"],
     timezone: "America/Phoenix",
+    station: {
+      id: "KPHX",
+      name: "Phoenix Sky Harbor",
+      lat: 33.4342,
+      lon: -112.0116,
+      aliases: ["sky harbor"],
+    },
   },
   {
     code: "DAL",
@@ -58,6 +102,13 @@ export const CITIES: CityInfo[] = [
     lon: -96.797,
     keywords: ["dallas", "dfw", "fort worth", "love field"],
     timezone: "America/Chicago",
+    station: {
+      id: "KDFW",
+      name: "Dallas-Fort Worth Intl",
+      lat: 32.8998,
+      lon: -97.0403,
+      aliases: ["dallas fort worth", "dallas-fort worth", "dfw airport"],
+    },
   },
   {
     code: "ATL",
@@ -66,6 +117,13 @@ export const CITIES: CityInfo[] = [
     lon: -84.388,
     keywords: ["atlanta", "hartsfield"],
     timezone: "America/New_York",
+    station: {
+      id: "KATL",
+      name: "Atlanta Hartsfield-Jackson",
+      lat: 33.6301,
+      lon: -84.4418,
+      aliases: ["hartsfield"],
+    },
   },
   {
     code: "DEN",
@@ -74,6 +132,13 @@ export const CITIES: CityInfo[] = [
     lon: -104.9903,
     keywords: ["denver", "stapleton", "dia"],
     timezone: "America/Denver",
+    station: {
+      id: "KDEN",
+      name: "Denver Intl Airport",
+      lat: 39.8467,
+      lon: -104.6562,
+      aliases: ["denver international", "denver intl"],
+    },
   },
   {
     code: "SEA",
@@ -82,6 +147,13 @@ export const CITIES: CityInfo[] = [
     lon: -122.3321,
     keywords: ["seattle", "seatac", "sea-tac", "boeing field"],
     timezone: "America/Los_Angeles",
+    station: {
+      id: "KSEA",
+      name: "Seattle-Tacoma Intl",
+      lat: 47.4444,
+      lon: -122.3138,
+      aliases: ["seattle-tacoma", "seatac", "sea-tac"],
+    },
   },
   {
     code: "BOS",
@@ -90,6 +162,13 @@ export const CITIES: CityInfo[] = [
     lon: -71.0589,
     keywords: ["boston", "logans", "logan international"],
     timezone: "America/New_York",
+    station: {
+      id: "KBOS",
+      name: "Boston Logan Intl",
+      lat: 42.3606,
+      lon: -71.0106,
+      aliases: ["logan"],
+    },
   },
   {
     code: "PHL",
@@ -98,6 +177,13 @@ export const CITIES: CityInfo[] = [
     lon: -75.1652,
     keywords: ["philadelphia", "philly", "phl"],
     timezone: "America/New_York",
+    station: {
+      id: "KPHL",
+      name: "Philadelphia Intl Airport",
+      lat: 39.8683,
+      lon: -75.2311,
+      aliases: ["philadelphia international"],
+    },
   },
   {
     code: "DC",
@@ -106,6 +192,13 @@ export const CITIES: CityInfo[] = [
     lon: -77.0369,
     keywords: ["washington dc", "washington d.c.", "dca", "reagan", "dulles", "baltimore", "bwi"],
     timezone: "America/New_York",
+    station: {
+      id: "KDCA",
+      name: "Reagan National Airport",
+      lat: 38.8483,
+      lon: -77.0342,
+      aliases: ["reagan national", "reagan"],
+    },
   },
   {
     code: "SFO",
@@ -114,6 +207,13 @@ export const CITIES: CityInfo[] = [
     lon: -122.4194,
     keywords: ["san francisco", "sfo", "bay area", "oakland", "sfo "],
     timezone: "America/Los_Angeles",
+    station: {
+      id: "KSFO",
+      name: "San Francisco Intl",
+      lat: 37.6197,
+      lon: -122.3647,
+      aliases: ["san francisco international"],
+    },
   },
   {
     code: "LAS",
@@ -122,6 +222,13 @@ export const CITIES: CityInfo[] = [
     lon: -115.1398,
     keywords: ["las vegas", "vegas", "mccarran", "harry reid"],
     timezone: "America/Los_Angeles",
+    station: {
+      id: "KLAS",
+      name: "Harry Reid Intl Airport",
+      lat: 36.0719,
+      lon: -115.1634,
+      aliases: ["harry reid", "mccarran"],
+    },
   },
   {
     code: "MSP",
@@ -154,6 +261,13 @@ export const CITIES: CityInfo[] = [
     lon: -97.7431,
     keywords: ["austin", "aus", "bergstrom", "austin-bergstrom"],
     timezone: "America/Chicago",
+    station: {
+      id: "KAUS",
+      name: "Austin-Bergstrom Intl",
+      lat: 30.1945,
+      lon: -97.6699,
+      aliases: ["bergstrom", "austin-bergstrom"],
+    },
   },
   {
     code: "BNA",
@@ -346,6 +460,51 @@ export const CITY_MAP: Record<string, CityInfo> = Object.fromEntries(
 );
 
 /**
+ * Coordinates to request forecasts for. Kalshi settles on the NWS climate
+ * station named in the market rules, so prefer the station location over
+ * the city center when we know it.
+ */
+export function forecastCoords(city: CityInfo): { lat: number; lon: number } {
+  return city.station
+    ? { lat: city.station.lat, lon: city.station.lon }
+    : { lat: city.lat, lon: city.lon };
+}
+
+/**
+ * Observability check: warn when an event's rules text names a settlement
+ * station that belongs to a DIFFERENT city than the one we detected, which
+ * would mean we're forecasting the wrong location.
+ */
+export function detectStationMismatch(city: CityInfo, rulesPrimary?: string): void {
+  if (!rulesPrimary) return;
+  const rules = rulesPrimary.toLowerCase();
+  for (const other of CITIES) {
+    if (!other.station || other.code === city.code) continue;
+    for (const alias of other.station.aliases) {
+      if (rules.includes(alias)) {
+        console.warn(
+          `[cities] event detected as ${city.code} but rules mention "${other.station.name}" (${other.station.id}, ${other.code}) — check station mapping`,
+        );
+        return;
+      }
+    }
+  }
+}
+
+/**
+ * Boundary-aware keyword test. Plain substring matching misfires on short
+ * keywords — e.g. LAX's "la" matches inside the New Orleans series ticker
+ * "KXHIGHTNOLA", silently predicting NOLA events with Los Angeles weather.
+ * Requires a non-alphanumeric character (or string edge) on both sides.
+ */
+function keywordMatches(haystack: string, keyword: string): boolean {
+  const clean = keyword.trim().toLowerCase();
+  if (!clean) return false;
+  const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).test(haystack);
+}
+
+/**
  * Detect which city a Kalshi weather event references by scanning
  * the event title, series ticker, and market rules.
  */
@@ -357,7 +516,7 @@ export function detectCity(
   const haystack = `${eventTitle} ${seriesTicker} ${rulesPrimary ?? ""}`.toLowerCase();
   for (const city of CITIES) {
     for (const kw of city.keywords) {
-      if (haystack.includes(kw.toLowerCase())) {
+      if (keywordMatches(haystack, kw)) {
         return city;
       }
     }
@@ -406,10 +565,11 @@ function matchCityByName(name: string): CityInfo | null {
   }
 
   // Pass 2: contains (handles "Yes - Chicago", "Chicago wins", etc.)
+  // Keywords use boundary-aware matching to avoid short-code false positives.
   for (const city of CITIES) {
     if (clean.includes(city.label.toLowerCase())) return city;
     for (const kw of city.keywords) {
-      if (clean.includes(kw.toLowerCase())) return city;
+      if (keywordMatches(clean, kw)) return city;
     }
   }
 

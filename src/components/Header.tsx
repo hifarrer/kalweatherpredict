@@ -19,6 +19,12 @@ export default function Header({ onRefresh, loading }: HeaderProps) {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          <a
+            href="/stats"
+            className="text-sm text-kalshi-muted hover:text-kalshi-orange font-medium transition-colors"
+          >
+            Stats
+          </a>
           <div className="hidden sm:flex items-center gap-2 text-sm text-kalshi-muted">
             <span className="inline-block w-2 h-2 rounded-full bg-kalshi-green animate-pulse" />
             Live Data

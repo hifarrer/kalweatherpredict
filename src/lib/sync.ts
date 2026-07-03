@@ -7,13 +7,16 @@ import {
   getWeatherSeriesTickers,
   computeEarliestClose,
 } from "@/lib/kalshi";
-import { detectCity } from "@/lib/cities";
+import { detectCity, detectStationMismatch } from "@/lib/cities";
 
 // --- Tuning constants ---
 
 const FULL_SYNC_INTERVAL_MS = 15 * 60 * 1000; // discover + upsert every 15 min
 const SERIES_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // weather series list cached 6h
 const SCHEDULER_INTERVAL_MS = 10 * 60 * 1000; // background timer fires every 10 min
+const SNAPSHOT_INTERVAL_MS = 60 * 60 * 1000; // broad prediction snapshot hourly
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000; // prune old snapshots daily
+const CALIBRATION_INTERVAL_MS = 24 * 60 * 60 * 1000; // recompute sigma calibration daily
 
 // Promise-based deduplication: concurrent callers share the in-flight sync
 // instead of skipping it. After it completes, force-refresh callers get a
@@ -99,6 +102,7 @@ async function doFullSync(): Promise<number> {
     const primaryRules = e.markets?.[0]?.rules_primary;
     const city = detectCity(e.title, e.series_ticker, primaryRules);
     const cityCode = city?.code ?? null;
+    if (city) detectStationMismatch(city, primaryRules);
     const earliestClose = computeEarliestClose(e.markets) || null;
 
     await db
@@ -229,6 +233,62 @@ export async function syncEventsIfNeeded(opts?: {
   return { synced: false };
 }
 
+// --- Accuracy-tracking jobs (snapshots, settlements, calibration) ---
+
+async function getMetaTs(key: string): Promise<number> {
+  const row = await db.select().from(syncMeta).where(eq(syncMeta.key, key)).limit(1);
+  if (row.length === 0) return 0;
+  const value = row[0].value as { ts?: number };
+  return value?.ts ?? 0;
+}
+
+async function setMetaTs(key: string): Promise<void> {
+  await db
+    .insert(syncMeta)
+    .values({ key, value: { ts: Date.now() } })
+    .onConflictDoUpdate({
+      target: syncMeta.key,
+      set: { value: { ts: Date.now() }, updatedAt: new Date() },
+    });
+}
+
+/**
+ * Run the accuracy-tracking jobs, each gated on its own sync_meta timestamp:
+ * - broad prediction snapshot hourly (+ final snapshots for markets closing
+ *   soon on every tick, deduped inside snapshotPredictions),
+ * - settlement fetch every tick (cheap and self-limiting),
+ * - snapshot pruning and sigma recalibration daily.
+ *
+ * history/calibration are imported dynamically to keep the module graph
+ * acyclic (history.ts imports from this file).
+ */
+export async function runTrackingJobs(): Promise<void> {
+  const { snapshotPredictions, fetchSettlements, pruneOldSnapshots } = await import(
+    "@/lib/history"
+  );
+  const now = Date.now();
+
+  if (now - (await getMetaTs("last_snapshot_at")) > SNAPSHOT_INTERVAL_MS) {
+    await snapshotPredictions();
+    await setMetaTs("last_snapshot_at");
+  } else {
+    await snapshotPredictions({ finalOnly: true });
+  }
+
+  await fetchSettlements();
+
+  if (now - (await getMetaTs("last_prune_at")) > PRUNE_INTERVAL_MS) {
+    await pruneOldSnapshots();
+    await setMetaTs("last_prune_at");
+  }
+
+  if (now - (await getMetaTs("last_calibration_at")) > CALIBRATION_INTERVAL_MS) {
+    const { recomputeSigmaCalibration } = await import("@/lib/calibrationStore");
+    await recomputeSigmaCalibration();
+    await setMetaTs("last_calibration_at");
+  }
+}
+
 /**
  * Start the background sync scheduler.
  *
@@ -258,15 +318,16 @@ export function startSyncScheduler() {
         console.log("[sync] DB empty — running initial sync");
         await runFullSync();
       }
+      await runTrackingJobs();
     } catch (err) {
       console.error("[sync] initial sync check failed:", err);
     }
   })();
 
   setInterval(() => {
-    runFullSync().catch((err) =>
-      console.error("[sync] scheduled sync error:", err),
-    );
+    runFullSync()
+      .then(() => runTrackingJobs())
+      .catch((err) => console.error("[sync] scheduled sync error:", err));
   }, SCHEDULER_INTERVAL_MS);
 }
 

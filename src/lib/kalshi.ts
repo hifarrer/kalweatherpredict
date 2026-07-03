@@ -152,7 +152,7 @@ export function computeEarliestClose(markets: KalshiMarket[] | undefined): strin
     .sort()[0];
 }
 
-export type SortMode = "trending" | "volume" | "expiration" | "opportunity";
+export type SortMode = "trending" | "volume" | "expiration" | "opportunity" | "edge";
 
 /**
  * Extra safety filter: verify the event title looks weather-related.

@@ -13,7 +13,7 @@ import EventCard from "@/components/EventCard";
 export default function HomePage() {
   const [events, setEvents] = useState<EnrichedEvent[]>([]);
   const [forecasts, setForecasts] = useState<Record<string, WeatherForecast>>({});
-  const [sort, setSort] = useState<SortMode>("trending");
+  const [sort, setSort] = useState<SortMode>("opportunity");
   const [subcategory, setSubcategory] = useState<SubcategoryFilterValue>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

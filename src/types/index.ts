@@ -47,6 +47,20 @@ export interface KalshiSeries {
 
 // Weather types
 
+/**
+ * The NWS climate station a city's Kalshi markets settle on.
+ * Kalshi weather markets resolve from the official NWS daily climate report
+ * for a specific station (named in each market's rules_primary), which can
+ * sit several miles — and several °F — away from the city center.
+ */
+export interface StationInfo {
+  id: string; // ICAO/NWS identifier, e.g. "KNYC"
+  name: string;
+  lat: number;
+  lon: number;
+  aliases: string[]; // lowercase phrases used in Kalshi rules text
+}
+
 export interface CityInfo {
   code: string;
   label: string;
@@ -54,16 +68,30 @@ export interface CityInfo {
   lon: number;
   keywords: string[];
   timezone: string; // IANA timezone identifier, e.g. "America/Chicago"
+  station?: StationInfo; // settlement station; forecasts use these coords when set
+}
+
+/**
+ * Per-model point forecasts for one day (values may be null when a model's
+ * horizon has been exceeded, e.g. HRRR beyond ~48h).
+ */
+export interface ModelDailyValues {
+  max: number | null;
+  min: number | null;
+  precip: number | null;
+  snow: number | null;
 }
 
 export interface DailyForecast {
   date: string;
-  max: number;
-  min: number;
+  max: number;           // ensemble median (rounded)
+  min: number;           // ensemble median (rounded)
   rain?: number;         // daily rain total (inches)
   precip?: number;       // daily precipitation total (inches)
   snowfall?: number;     // daily snowfall total (inches)
   precipProb?: number;   // daily max precipitation probability (%)
+  byModel?: Record<string, ModelDailyValues>; // per-model values (ensemble members only)
+  spread?: { max: number; min: number; precip: number; snow: number }; // cross-model stddev
 }
 
 /**
@@ -81,8 +109,17 @@ export interface WeatherForecast {
   todayHigh: number | null;
   todayLow: number | null;
   daily: DailyForecast[];
-  hourlyTimes: string[];
+  hourlyTimes: string[];  // local ISO, past 24h + next 72h
   hourlyTemps: number[];
+  hourlyPrecip?: number[];
+  // Hours already elapsed (local time <= now) — feeds same-day blending
+  pastHours?: { times: string[]; temps: number[]; precip: number[] };
+  // Official NWS observations for today at the settlement station (°F).
+  // Authoritative over model-assimilated pastHours when present.
+  stationObs?: { max: number | null; min: number | null; count: number };
+  modelsUsed?: string[];
+  stationId?: string;     // NWS settlement station the coords point at
+  utcOffsetSeconds?: number;
 }
 
 // Prediction result
@@ -95,10 +132,16 @@ export type PredictionVerdict = "YES" | "NO" | "UNCERTAIN";
  */
 export interface MarketLikelihood {
   ticker: string;
-  probability: number; // 0-1
+  probability: number; // 0-1, forecast-implied P(YES)
   forecastValue?: number; // multi-city: that city's metric value
   cityCode?: string; // multi-city: the resolved city
+  marketProb?: number; // 0-1, Kalshi market-implied P(YES)
+  edge?: number; // probability - marketProb (positive = market underprices YES)
+  decided?: boolean; // pinned to 0/1 by same-day observations
 }
+
+/** How strongly the forecast models agree for the target day. */
+export type ModelAgreement = "high" | "medium" | "low";
 
 export interface PredictionResult {
   verdict: PredictionVerdict;
@@ -111,6 +154,13 @@ export interface PredictionResult {
   marketLikelihoods?: MarketLikelihood[]; // probability for every market
   matchedCount?: number; // multi-city: number of cities forecast to satisfy the threshold
   multiCity?: boolean; // multi-city: flag for UI rendering
+  targetDate?: string; // YYYY-MM-DD local date the prediction is for
+  leadDays?: number; // days between now and the target date (0 = today)
+  sigma?: number; // stddev used for probability estimation
+  modelSpread?: number; // cross-model stddev for the target day
+  agreement?: ModelAgreement; // model consensus classification
+  alreadyDecided?: boolean; // same-day observations have locked the outcome
+  observedSoFar?: number; // same-day running value (max temp / precip total)
 }
 
 // Enriched event (event + city + forecast + prediction)
@@ -124,6 +174,7 @@ export interface EnrichedEvent {
   prediction: PredictionResult | null;
   opportunityScore?: number;
   subcategory: WeatherMetric;
+  maxEdge?: number; // largest |forecast - market| probability gap among liquid markets
 }
 
 // AI analysis result

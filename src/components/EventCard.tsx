@@ -8,6 +8,7 @@ import PredictionBadge from "./PredictionBadge";
 import WeatherChip from "./WeatherChip";
 import MarketsList from "./MarketsList";
 import AiAnalysisModal from "./AiAnalysisModal";
+import ForecastPanel from "./ForecastPanel";
 
 interface EventCardProps {
   enriched: EnrichedEvent;
@@ -18,8 +19,16 @@ interface EventCardProps {
 
 export default function EventCard({ enriched, forecast, onRefreshed }: EventCardProps) {
   const [aiOpen, setAiOpen] = useState(false);
+  const [forecastOpen, setForecastOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  // Ticks every minute so the countdown-to-close chip stays fresh
+  const [nowTs, setNowTs] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = setInterval(() => setNowTs(Date.now()), 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Local copy of enriched data so per-card refresh can update it in-place
   const [localEnriched, setLocalEnriched] = useState(enriched);
@@ -168,6 +177,28 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
           )}
         </div>
 
+        {/* Forecast detail toggle */}
+        {forecast && (
+          <div className="px-4 pb-2">
+            <button
+              onClick={() => setForecastOpen((v) => !v)}
+              className="flex items-center gap-1 text-[11px] text-kalshi-muted hover:text-kalshi-orange transition-colors"
+            >
+              <svg
+                className={`w-3 h-3 transition-transform ${forecastOpen ? "rotate-90" : ""}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              Forecast detail
+            </button>
+            {forecastOpen && <ForecastPanel forecast={forecast} prediction={prediction} />}
+          </div>
+        )}
+
         {/* Divider */}
         <div className="border-t border-kalshi-border" />
 
@@ -177,6 +208,7 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
             markets={event.markets}
             subcategory={localEnriched.subcategory}
             marketLikelihoods={prediction?.marketLikelihoods}
+            agreement={prediction?.agreement}
           />
         </div>
 
@@ -186,7 +218,10 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
           <div className="flex items-center justify-between text-[10px] text-kalshi-muted">
             <span>24h Vol: {formatVolume(volume24h)}</span>
             {earliestClose && (
-              <span>Closes: {formatDate(earliestClose, city?.timezone)}</span>
+              <span className="flex items-center gap-1.5">
+                <span>Closes: {formatDate(earliestClose, city?.timezone)}</span>
+                <CountdownChip closeIso={earliestClose} nowTs={nowTs} />
+              </span>
             )}
           </div>
 
@@ -225,6 +260,38 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
       />
     </>
   );
+}
+
+function CountdownChip({ closeIso, nowTs }: { closeIso: string; nowTs: number }) {
+  const label = formatCountdown(closeIso, nowTs);
+  if (!label) return null;
+
+  const msLeft = new Date(closeIso).getTime() - nowTs;
+  const urgent = msLeft < 3 * 60 * 60 * 1000; // amber under 3 hours
+
+  return (
+    <span
+      className={`px-1.5 py-0.5 rounded font-semibold ${
+        urgent ? "bg-amber-500/15 text-amber-400" : "bg-white/5 text-kalshi-muted"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function formatCountdown(closeIso: string, nowTs: number): string | null {
+  const ms = new Date(closeIso).getTime() - nowTs;
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+
+  const totalMinutes = Math.floor(ms / 60_000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days > 0) return `in ${days}d ${hours}h`;
+  if (hours > 0) return `in ${hours}h ${minutes}m`;
+  return `in ${minutes}m`;
 }
 
 function formatVolume(vol: number): string {

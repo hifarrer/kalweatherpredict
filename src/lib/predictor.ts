@@ -9,6 +9,14 @@ import {
   WeatherMetric,
 } from "@/types";
 import { MarketCityMatch } from "@/lib/cities";
+import {
+  SigmaCalibration,
+  leadBucket,
+  CALIBRATION_MIN_SAMPLES,
+} from "@/lib/calibration";
+import { ModelAgreement } from "@/types";
+import { summarizeToday, sameDayMarketProbability, SameDayObservation } from "@/lib/observed";
+import { normalCdf } from "@/lib/stats";
 
 /**
  * Find the primary market in an event — the one with the highest 24h volume.
@@ -31,6 +39,33 @@ export function getPrimaryMarket(markets: KalshiMarket[] | undefined): KalshiMar
  * 4. Fallback: today.
  */
 export function getRelevantForecastIndex(
+  forecast: WeatherForecast,
+  event: KalshiEvent,
+  market: KalshiMarket,
+  timezone?: string,
+): number {
+  return getTargetDay(forecast, event, market, timezone).index;
+}
+
+/**
+ * Resolve the forecast day an event targets, along with its date and lead
+ * time. daily[0] is today in the city's local timezone, so leadDays === index.
+ */
+export function getTargetDay(
+  forecast: WeatherForecast,
+  event: KalshiEvent,
+  market: KalshiMarket,
+  timezone?: string,
+): { index: number; date: string | null; leadDays: number } {
+  const index = resolveForecastIndex(forecast, event, market, timezone);
+  return {
+    index,
+    date: forecast.daily[index]?.date ?? null,
+    leadDays: index,
+  };
+}
+
+function resolveForecastIndex(
   forecast: WeatherForecast,
   event: KalshiEvent,
   market: KalshiMarket,
@@ -143,8 +178,8 @@ export function detectMetric(event: KalshiEvent): WeatherMetric {
     return "snowfall";
   }
 
-  // Check low temperature
-  if (/low temp|low temperature|overnight low/.test(haystack)) {
+  // Check low temperature ("low/lowest/minimum temperature", "overnight low")
+  if (/low(est)?\s+temp|min(imum)?\s+temp|overnight low/.test(haystack)) {
     return "temperature_low";
   }
 
@@ -293,42 +328,27 @@ export function findMatchingBucket(
   return null;
 }
 
+/**
+ * Market-implied probability of YES: prefer the last traded price, fall
+ * back to the YES bid. Shared by the UI badges, edge computation, and
+ * prediction snapshots so all use the same formula.
+ */
+export function impliedMarketProb(m: KalshiMarket): number {
+  const lastPrice = parseFloat(m.last_price_dollars || "0");
+  if (lastPrice > 0) return lastPrice;
+  const yesBid = parseFloat(m.yes_bid_dollars || "0");
+  return yesBid > 0 ? yesBid : 0;
+}
+
 // ---------------------------------------------------------------------------
 // Per-market probability estimation (for gradient highlighting)
 // ---------------------------------------------------------------------------
 
 /**
- * Approximation of the error function (Abramowitz & Stegun 7.1.26).
- * Max error ~1.5×10⁻⁷.
+ * Legacy fixed forecast uncertainty per metric. Still used for monthly
+ * projections (scaled up) where the lead-time model doesn't apply.
  */
-function erf(x: number): number {
-  const sign = x >= 0 ? 1 : -1;
-  const ax = Math.abs(x);
-  const t = 1 / (1 + 0.3275911 * ax);
-  const y =
-    1 -
-    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) *
-      t +
-      0.254829592) *
-      t *
-      Math.exp(-ax * ax);
-  return sign * y;
-}
-
-/**
- * Cumulative distribution function of a normal distribution.
- * Returns P(X <= x) where X ~ N(mean, std²).
- */
-function normalCdf(x: number, mean: number, std: number): number {
-  return 0.5 * (1 + erf((x - mean) / (std * Math.SQRT2)));
-}
-
-/**
- * Forecast uncertainty (standard deviation) per metric.
- * Represents how much the actual weather value typically deviates from
- * the forecast point estimate.
- */
-function forecastStdDev(metric: WeatherMetric): number {
+function legacyStdDev(metric: WeatherMetric): number {
   switch (metric) {
     case "temperature_high":
     case "temperature_low":
@@ -340,6 +360,98 @@ function forecastStdDev(metric: WeatherMetric): number {
     default:
       return 3;
   }
+}
+
+/**
+ * Base forecast error growth with lead time, per metric family.
+ * Tuned to typical NWS/model verification stats; replaced by empirically
+ * calibrated values once enough settlement history accumulates.
+ */
+const SIGMA_BASE: Record<string, { intercept: number; perDay: number; cap: number; floor: number }> = {
+  temperature: { intercept: 1.8, perDay: 0.37, cap: 6.0, floor: 1.0 },
+  precipitation: { intercept: 0.3, perDay: 0.12, cap: 1.2, floor: 0.1 },
+  snowfall: { intercept: 0.8, perDay: 0.25, cap: 3.0, floor: 0.3 },
+};
+
+function sigmaParams(metric: WeatherMetric) {
+  if (metric === "precipitation") return SIGMA_BASE.precipitation;
+  if (metric === "snowfall") return SIGMA_BASE.snowfall;
+  return SIGMA_BASE.temperature;
+}
+
+/**
+ * Forecast uncertainty (stddev) for a prediction:
+ * - grows with lead time (a 10-day forecast deserves wider error bars),
+ * - never narrower than the cross-model disagreement for that day,
+ * - uses the empirically calibrated value when enough samples exist.
+ */
+export function computeSigma(
+  metric: WeatherMetric,
+  leadDays: number,
+  modelSpread = 0,
+  calibration?: SigmaCalibration | null,
+): number {
+  const p = sigmaParams(metric);
+  const lead = Math.max(0, leadDays);
+
+  const cal = calibration?.[metric]?.[leadBucket(lead)];
+  if (cal && cal.n >= CALIBRATION_MIN_SAMPLES) {
+    return Math.max(p.floor, cal.sigma, 0.75 * modelSpread);
+  }
+
+  const base = Math.min(p.cap, p.intercept + p.perDay * lead);
+  return Math.max(p.floor, base, modelSpread);
+}
+
+/**
+ * Pick the cross-model spread relevant to a metric for one forecast day,
+ * and count how many ensemble members actually cover that day.
+ */
+export function spreadForMetric(
+  daily: DailyForecast,
+  metric: WeatherMetric,
+): { spread: number; models: number } {
+  const key =
+    metric === "temperature_low" ? "min" :
+    metric === "precipitation" ? "precip" :
+    metric === "snowfall" ? "snow" :
+    "max";
+
+  const spread = daily.spread?.[key] ?? 0;
+
+  let models = 0;
+  if (daily.byModel) {
+    for (const mv of Object.values(daily.byModel)) {
+      const v =
+        key === "min" ? mv.min :
+        key === "precip" ? mv.precip :
+        key === "snow" ? mv.snow :
+        mv.max;
+      if (v !== null && v !== undefined) models++;
+    }
+  }
+
+  return { spread, models };
+}
+
+/**
+ * Classify how much the forecast models agree for a day/metric.
+ * With fewer than 2 covering models there is no consensus signal — treat
+ * as low so the UI doesn't paint false confidence.
+ */
+export function classifyAgreement(
+  metric: WeatherMetric,
+  spread: number,
+  models: number,
+): ModelAgreement {
+  if (models < 2) return "low";
+  const [high, medium] =
+    metric === "precipitation" ? [0.15, 0.4] :
+    metric === "snowfall" ? [0.5, 1.5] :
+    [1.5, 3.0];
+  if (spread <= high) return "high";
+  if (spread <= medium) return "medium";
+  return "low";
 }
 
 /**
@@ -358,8 +470,9 @@ export function computeMarketProbability(
   forecastValue: number,
   market: KalshiMarket,
   metric: WeatherMetric,
+  sigmaOverride?: number,
 ): number {
-  const sigma = forecastStdDev(metric);
+  const sigma = sigmaOverride ?? computeSigma(metric, 0);
   const floor = market.floor_strike;
   const cap = market.cap_strike;
   let prob = 0;
@@ -393,11 +506,18 @@ export function computeMarketLikelihoods(
   forecastValue: number,
   markets: KalshiMarket[],
   metric: WeatherMetric,
+  sigma?: number,
 ): MarketLikelihood[] {
-  return markets.map((m) => ({
-    ticker: m.ticker,
-    probability: computeMarketProbability(forecastValue, m, metric),
-  }));
+  return markets.map((m) => {
+    const probability = computeMarketProbability(forecastValue, m, metric, sigma);
+    const marketProb = impliedMarketProb(m);
+    return {
+      ticker: m.ticker,
+      probability,
+      marketProb,
+      edge: probability - marketProb,
+    };
+  });
 }
 
 /**
@@ -411,6 +531,7 @@ export function predictEvent(
   event: KalshiEvent,
   forecast: WeatherForecast | null,
   timezone?: string,
+  calibration?: SigmaCalibration | null,
 ): PredictionResult | null {
   if (!forecast || !event.markets || event.markets.length === 0) return null;
 
@@ -446,7 +567,15 @@ export function predictEvent(
 
     const forecastValue = projection.total;
     const coveragePct = `${(projection.coverage * 100).toFixed(0)}%`;
-    const marketLikelihoods = computeMarketLikelihoods(forecastValue, event.markets, metric);
+    // Monthly totals extrapolate from partial coverage — the lead-time model
+    // doesn't apply, so use a doubled fixed sigma to reflect the extra noise.
+    const monthlySigma = legacyStdDev(metric) * 2;
+    const marketLikelihoods = computeMarketLikelihoods(
+      forecastValue,
+      event.markets,
+      metric,
+      monthlySigma,
+    );
 
     // Strategy 1: Range-bucket markets
     const matchedBucket = findMatchingBucket(forecastValue, event.markets);
@@ -460,6 +589,7 @@ export function predictEvent(
         unit,
         coverage: projection.coverage,
         marketLikelihoods,
+        sigma: monthlySigma,
       };
     }
 
@@ -476,12 +606,13 @@ export function predictEvent(
       unit,
       coverage: projection.coverage,
       marketLikelihoods,
+      sigma: monthlySigma,
     };
   }
 
   // Single-day events (temperature or daily precipitation)
-  const forecastIdx = getRelevantForecastIndex(forecast, event, primary, timezone);
-  const daily = forecast.daily[forecastIdx];
+  const target = getTargetDay(forecast, event, primary, timezone);
+  const daily = forecast.daily[target.index];
   if (!daily) return null;
 
   // Determine the relevant forecast value based on metric
@@ -502,7 +633,59 @@ export function predictEvent(
       break;
   }
 
-  const marketLikelihoods = computeMarketLikelihoods(forecastValue, event.markets, metric);
+  // Uncertainty: lead-time base widened by cross-model disagreement
+  const { spread, models } = spreadForMetric(daily, metric);
+  const sigma = computeSigma(metric, target.leadDays, spread, calibration);
+  const agreement = classifyAgreement(metric, spread, models);
+
+  // Same-day markets: blend what has already been observed with the
+  // remaining-hours forecast. A running max above a strike decides it.
+  const obs =
+    target.leadDays === 0 && metric !== "snowfall" ? summarizeToday(forecast) : null;
+
+  let marketLikelihoods: MarketLikelihood[];
+  let observedSoFar: number | undefined;
+
+  if (obs) {
+    if (metric === "temperature_high" && obs.observedMax !== null) {
+      observedSoFar = obs.observedMax;
+      forecastValue = Math.max(forecastValue, obs.observedMax);
+    } else if (metric === "temperature_low" && obs.observedMin !== null) {
+      observedSoFar = obs.observedMin;
+      forecastValue = Math.min(forecastValue, obs.observedMin);
+    } else if (metric === "precipitation") {
+      observedSoFar = obs.observedPrecip;
+    }
+
+    marketLikelihoods = event.markets.map((m) => {
+      const marketProb = impliedMarketProb(m);
+      const blended = sameDayMarketProbability(obs, m, metric, sigma);
+      const probability =
+        blended?.prob ?? computeMarketProbability(forecastValue, m, metric, sigma);
+      return {
+        ticker: m.ticker,
+        probability,
+        marketProb,
+        edge: probability - marketProb,
+        decided: blended?.decided || undefined,
+      };
+    });
+  } else {
+    marketLikelihoods = computeMarketLikelihoods(forecastValue, event.markets, metric, sigma);
+  }
+
+  const decidedByTicker = new Map(
+    marketLikelihoods.map((ml) => [ml.ticker, ml.decided === true]),
+  );
+
+  const meta = {
+    targetDate: target.date ?? daily.date,
+    leadDays: target.leadDays,
+    sigma,
+    modelSpread: spread,
+    agreement,
+    observedSoFar,
+  };
 
   // Strategy 1: Range-bucket markets
   const matchedBucket = findMatchingBucket(forecastValue, event.markets);
@@ -515,6 +698,8 @@ export function predictEvent(
       metric,
       unit,
       marketLikelihoods,
+      ...meta,
+      alreadyDecided: decidedByTicker.get(matchedBucket.ticker) || undefined,
     };
   }
 
@@ -535,6 +720,8 @@ export function predictEvent(
     metric,
     unit,
     marketLikelihoods,
+    ...meta,
+    alreadyDecided: decidedByTicker.get(primary.ticker) || undefined,
   };
 }
 
@@ -559,6 +746,7 @@ export function predictMultiCityEvent(
   event: KalshiEvent,
   forecastMap: Record<string, WeatherForecast>,
   marketCities: MarketCityMatch[],
+  calibration?: SigmaCalibration | null,
 ): PredictionResult | null {
   if (!event.markets || event.markets.length === 0) return null;
 
@@ -589,6 +777,7 @@ export function predictMultiCityEvent(
         ticker: m.ticker,
         probability: 0,
         cityCode: cityCode ?? undefined,
+        marketProb: impliedMarketProb(m),
       });
       continue;
     }
@@ -596,10 +785,15 @@ export function predictMultiCityEvent(
     totalResolved++;
 
     // Find the relevant forecast day for this city (using city's timezone)
-    const forecastIdx = getRelevantForecastIndex(forecast, event, m, mc.city?.timezone);
-    const daily = forecast.daily[forecastIdx];
+    const target = getTargetDay(forecast, event, m, mc.city?.timezone);
+    const daily = forecast.daily[target.index];
     if (!daily) {
-      marketLikelihoods.push({ ticker: m.ticker, probability: 0, cityCode });
+      marketLikelihoods.push({
+        ticker: m.ticker,
+        probability: 0,
+        cityCode,
+        marketProb: impliedMarketProb(m),
+      });
       continue;
     }
 
@@ -621,12 +815,33 @@ export function predictMultiCityEvent(
         break;
     }
 
-    const prob = computeMarketProbability(forecastValue, m, metric);
+    const { spread } = spreadForMetric(daily, metric);
+    const sigma = computeSigma(metric, target.leadDays, spread, calibration);
+
+    // Same-day markets: blend this city's observed hours with the forecast
+    let blended: { prob: number; decided: boolean } | null = null;
+    if (target.leadDays === 0 && metric !== "snowfall") {
+      const obs: SameDayObservation | null = summarizeToday(forecast);
+      if (obs) {
+        blended = sameDayMarketProbability(obs, m, metric, sigma);
+        if (metric === "temperature_high" && obs.observedMax !== null) {
+          forecastValue = Math.max(forecastValue, obs.observedMax);
+        } else if (metric === "temperature_low" && obs.observedMin !== null) {
+          forecastValue = Math.min(forecastValue, obs.observedMin);
+        }
+      }
+    }
+
+    const prob = blended?.prob ?? computeMarketProbability(forecastValue, m, metric, sigma);
+    const marketProb = impliedMarketProb(m);
     marketLikelihoods.push({
       ticker: m.ticker,
       probability: prob,
       forecastValue,
       cityCode,
+      marketProb,
+      edge: prob - marketProb,
+      decided: blended?.decided || undefined,
     });
 
     if (prob >= MULTI_CITY_MATCH_THRESHOLD) {

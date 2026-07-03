@@ -1,17 +1,22 @@
-import { KalshiMarket, MarketLikelihood, WeatherMetric } from "@/types";
+import { KalshiMarket, MarketLikelihood, ModelAgreement, WeatherMetric } from "@/types";
+import { impliedMarketProb } from "@/lib/predictor";
 
 interface MarketsListProps {
   markets: KalshiMarket[] | undefined;
   subcategory?: WeatherMetric;
   marketLikelihoods?: MarketLikelihood[];
+  agreement?: ModelAgreement;
 }
 
 const HIGHLIGHT_THRESHOLD = 0.08; // only highlight markets with >=8% probability
+const EDGE_MIN_VOLUME = 100; // hide edge badge on illiquid markets
+const EDGE_NOTABLE = 0.05; // gray out edges under ±5%
 
 export default function MarketsList({
   markets,
   subcategory = "temperature_high",
   marketLikelihoods,
+  agreement,
 }: MarketsListProps) {
   if (!markets || markets.length === 0) {
     return <p className="text-xs text-kalshi-muted">No markets available</p>;
@@ -59,38 +64,46 @@ export default function MarketsList({
             <span className="inline-block w-2 h-2 rounded-sm bg-amber-500" />
             MK = Kalshi Market
           </span>
+          <span className="flex items-center gap-1" title="Forecast minus market probability">
+            <span className="inline-block w-2 h-2 rounded-sm bg-white/30" />
+            ± = Edge
+          </span>
         </div>
       )}
       {top.map((m) => {
         const yesPrice = parseFloat(m.yes_bid_dollars || "0");
         const noPrice = parseFloat(m.no_bid_dollars || "0");
-        const lastPrice = parseFloat(m.last_price_dollars || "0");
         const vol24 = parseFloat(m.volume_24h_fp || "0");
         const strikeLabel = formatStrike(m, subcategory);
         const ll = llMap.get(m.ticker);
         const prob = ll?.probability ?? 0;
         const fcValue = ll?.forecastValue;
         const highlighted = prob >= HIGHLIGHT_THRESHOLD;
-        // Market-implied probability: prefer last traded price, fall back to bid midpoint
-        const marketProb = lastPrice > 0
-          ? lastPrice
-          : yesPrice > 0
-            ? yesPrice
-            : 0;
+        const marketProb = ll?.marketProb ?? impliedMarketProb(m);
+        const edge = ll?.edge;
+        const decided = ll?.decided === true;
+        const showEdge = edge !== undefined && vol24 >= EDGE_MIN_VOLUME;
+
+        // Confidence styling: solid green fill only when models agree;
+        // low agreement gets a dimmer, striped fill so uncertainty is visible.
+        const lowAgreement = agreement === "low";
+        const fillAlpha = prob * (lowAgreement ? 0.16 : 0.28);
+        const highlightStyle = highlighted
+          ? {
+              backgroundColor: lowAgreement ? undefined : `rgba(46, 204, 113, ${fillAlpha})`,
+              backgroundImage: lowAgreement
+                ? `repeating-linear-gradient(45deg, rgba(46, 204, 113, ${fillAlpha}), rgba(46, 204, 113, ${fillAlpha}) 6px, rgba(46, 204, 113, ${fillAlpha * 0.35}) 6px, rgba(46, 204, 113, ${fillAlpha * 0.35}) 12px)`
+                : undefined,
+              borderLeft: `3px solid rgba(46, 204, 113, ${Math.min(1, prob * (lowAgreement ? 0.4 : 0.7))})`,
+              paddingLeft: "8px",
+            }
+          : undefined;
 
         return (
           <div
             key={m.ticker}
             className="flex items-center justify-between py-1.5 px-2 rounded transition-colors"
-            style={
-              highlighted
-                ? {
-                    backgroundColor: `rgba(46, 204, 113, ${prob * 0.28})`,
-                    borderLeft: `3px solid rgba(46, 204, 113, ${Math.min(1, prob * 0.7)})`,
-                    paddingLeft: "8px",
-                  }
-                : undefined
-            }
+            style={highlightStyle}
           >
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
@@ -102,12 +115,38 @@ export default function MarketsList({
                     {fcValue}{unit}
                   </span>
                 )}
+                {decided && (
+                  <span
+                    className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-bold bg-kalshi-green/20 text-kalshi-green shrink-0"
+                    title="Already decided by today's observed weather"
+                  >
+                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    Decided
+                  </span>
+                )}
               </div>
               {strikeLabel && (
                 <span className="text-[10px] text-kalshi-muted">{strikeLabel}</span>
               )}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
+              {/* Edge badge: forecast prob minus market prob */}
+              {showEdge && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    Math.abs(edge) < EDGE_NOTABLE
+                      ? "text-kalshi-muted bg-white/5"
+                      : edge > 0
+                        ? "text-kalshi-green bg-kalshi-green/15"
+                        : "text-kalshi-red bg-kalshi-red/15"
+                  }`}
+                  title="Forecast probability minus Kalshi market probability"
+                >
+                  {edge > 0 ? "+" : ""}{Math.round(edge * 100)}
+                </span>
+              )}
               {/* Forecast probability badge */}
               {hasLikelihoods && (
                 <span

@@ -1,30 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  computeEventVolume,
-  computeEventVolume24h,
-  computeEarliestClose,
-  SortMode,
-} from "@/lib/kalshi";
-import { CITY_MAP, detectMultiCity } from "@/lib/cities";
-import { getForecastsForCities } from "@/lib/weather";
-import {
-  predictEvent,
-  predictMultiCityEvent,
-  computeOpportunityScore,
-  detectMetric,
-} from "@/lib/predictor";
+import { SortMode } from "@/lib/kalshi";
 import { EnrichedEvent } from "@/types";
 import { db } from "@/db/client";
 import { events } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { syncEventsIfNeeded, getOpenEventsFromDb } from "@/lib/sync";
+import { buildEnrichedEvents } from "@/lib/enrich";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
     const sortParam = (req.nextUrl.searchParams.get("sort") as SortMode) || "trending";
-    const sort: SortMode = ["trending", "volume", "expiration", "opportunity"].includes(sortParam)
+    const sort: SortMode = ["trending", "volume", "expiration", "opportunity", "edge"].includes(sortParam)
       ? sortParam
       : "trending";
     const forceRefresh = req.nextUrl.searchParams.get("refresh") === "1";
@@ -58,39 +46,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ events: [] });
     }
 
-    // --- Collect city codes for forecast fetch ---
-    const cityCodesNeeded: string[] = [];
-    for (const row of dbEvents) {
-      const multi = detectMultiCity(row.event);
-      if (multi) {
-        for (const c of multi.cities) {
-          if (!cityCodesNeeded.includes(c.code)) cityCodesNeeded.push(c.code);
-        }
-      } else if (row.cityCode && !cityCodesNeeded.includes(row.cityCode)) {
-        cityCodesNeeded.push(row.cityCode);
-      }
-    }
-
-    const forecasts = await getForecastsForCities(cityCodesNeeded, CITY_MAP);
-
-    // --- Build enriched events ---
-    let enriched: EnrichedEvent[] = dbEvents.map(({ event: e, cityCode, earliestClose }) => {
-      const multi = detectMultiCity(e);
-      const prediction = multi
-        ? predictMultiCityEvent(e, forecasts, multi.marketCities)
-        : predictEvent(e, cityCode ? forecasts[cityCode] ?? null : null, cityCode ? CITY_MAP[cityCode]?.timezone : undefined);
-
-      return {
-        event: e,
-        cityCode,
-        volume: computeEventVolume(e.markets),
-        volume24h: computeEventVolume24h(e.markets),
-        earliestClose: earliestClose || computeEarliestClose(e.markets),
-        prediction,
-        opportunityScore: computeOpportunityScore(e, prediction),
-        subcategory: detectMetric(e),
-      };
-    });
+    let enriched: EnrichedEvent[] = await buildEnrichedEvents(dbEvents);
 
     // --- Filter out events with no liquidity (never traded) ---
     enriched = enriched.filter((e) => e.volume > 0 || e.volume24h > 0);
@@ -110,6 +66,9 @@ export async function GET(req: NextRequest) {
         break;
       case "opportunity":
         enriched.sort((a, b) => (b.opportunityScore ?? 0) - (a.opportunityScore ?? 0));
+        break;
+      case "edge":
+        enriched.sort((a, b) => Math.abs(b.maxEdge ?? 0) - Math.abs(a.maxEdge ?? 0));
         break;
       case "trending":
       default:

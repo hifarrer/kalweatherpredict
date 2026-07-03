@@ -19,6 +19,11 @@ const SORT_OPTIONS: { value: SortMode; label: string; tooltip?: string }[] = [
     label: "Opportunity",
     tooltip: "Forecast says likely YES but market price is low — potential value bets",
   },
+  {
+    value: "edge",
+    label: "Edge",
+    tooltip: "Largest gap between forecast-implied and market-implied probability",
+  },
 ];
 
 export default function SortControls({ sort, onSortChange, eventCount }: SortControlsProps) {

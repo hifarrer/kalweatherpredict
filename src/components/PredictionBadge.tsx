@@ -69,16 +69,38 @@ export default function PredictionBadge({ prediction }: PredictionBadgeProps) {
   } as const;
 
   const c = config[verdict];
+  const locked = prediction.alreadyDecided === true;
+  const lowAgreement = prediction.agreement === "low";
 
   return (
     <div className="flex flex-col gap-1">
       <div
-        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${c.bg} border ${c.border} text-xs font-semibold ${c.text} w-fit`}
+        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${c.bg} border ${c.border} text-xs font-semibold ${c.text} w-fit ${
+          lowAgreement && !locked ? "opacity-70" : ""
+        }`}
+        title={
+          locked
+            ? "Outcome already locked in by today's observed weather"
+            : lowAgreement
+              ? "Forecast models disagree — lower confidence"
+              : undefined
+        }
       >
-        <span className={`inline-block w-2 h-2 rounded-full ${c.dot}`} />
-        {c.label}
+        {locked ? (
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        ) : (
+          <span className={`inline-block w-2 h-2 rounded-full ${c.dot}`} />
+        )}
+        {locked ? `Locked: ${verdict}` : c.label}
         {forecastValue !== null && (
           <span className="ml-1 text-kalshi-text/80">({forecastValue}{prediction.unit})</span>
+        )}
+        {lowAgreement && !locked && (
+          <span className="text-[9px] font-bold uppercase tracking-wide opacity-80">
+            models split
+          </span>
         )}
       </div>
       <p className="text-xs text-kalshi-muted">{detail}</p>

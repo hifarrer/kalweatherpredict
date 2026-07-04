@@ -16,8 +16,12 @@ interface AdvantageRow {
   side: BuySide;
   price: number;
   forecastProb: number;
+  blendedProb: number;
+  winProb: number;
   marketProb: number | null;
+  feePerContract: number;
   evPerContract: number;
+  score: number;
   estProfitPer100: number;
   kind: "consensus" | "value";
   rationale: string;
@@ -39,7 +43,7 @@ export default function AdvantagePage() {
   const [scan, setScan] = useState<AdvantageScan | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [minEv, setMinEv] = useState(5); // cents
+  const [minEv, setMinEv] = useState(3); // cents (net of fees)
   const [leadFilter, setLeadFilter] = useState<LeadFilter>("all");
   const [detail, setDetail] = useState<EnrichedEvent | null>(null);
   const [detailForecast, setDetailForecast] = useState<WeatherForecast | null>(null);
@@ -79,7 +83,10 @@ export default function AdvantagePage() {
     });
   }, [scan, minEv, leadFilter]);
 
-  const bestEv = rows.length > 0 ? Math.round(rows[0].evPerContract * 100) : 0;
+  const bestEv =
+    rows.length > 0
+      ? Math.round(Math.max(...rows.map((r) => r.evPerContract)) * 100)
+      : 0;
 
   const openDetails = async (eventTicker: string, cityCode: string | null) => {
     setDetailLoading(eventTicker);
@@ -129,7 +136,7 @@ export default function AdvantagePage() {
           <h1 className="text-xl font-bold text-kalshi-text">AI Advantage</h1>
           <p className="text-xs text-kalshi-muted">
             Every open event scanned for gaps between forecast probability and market
-            price — the biggest expected-value plays first.
+            price — ranked by fee-adjusted, risk-weighted expected value.
           </p>
         </div>
 
@@ -180,7 +187,7 @@ export default function AdvantagePage() {
             <span className="text-kalshi-muted">Min EV:</span>
             <input
               type="range"
-              min={5}
+              min={3}
               max={40}
               step={1}
               value={minEv}
@@ -220,8 +227,9 @@ export default function AdvantagePage() {
           <div className="flex flex-col items-center justify-center py-24 gap-2 text-center">
             <p className="text-sm text-kalshi-text font-medium">No qualifying opportunities</p>
             <p className="text-xs text-kalshi-muted">
-              No liquid market currently offers +{minEv}¢ or more of expected value. Try
-              lowering the minimum EV or check back after the next forecast update.
+              No liquid market currently offers +{minEv}¢ or more of expected value after
+              fees and market-price blending. Try lowering the minimum EV or check back
+              after the next forecast update.
             </p>
           </div>
         ) : (
@@ -232,10 +240,10 @@ export default function AdvantagePage() {
                   <th className="font-semibold p-3">Event</th>
                   <th className="font-semibold p-3">Market</th>
                   <th className="font-semibold p-3">Side</th>
-                  <th className="font-semibold p-3 text-right">Forecast %</th>
+                  <th className="font-semibold p-3 text-right" title="Blended win probability (forecast model × market price)">Win %</th>
                   <th className="font-semibold p-3 text-right">Price</th>
-                  <th className="font-semibold p-3 text-right" title="Expected value per contract">EV</th>
-                  <th className="font-semibold p-3 text-right" title="Expected profit on a $100 stake">Est. profit / $100</th>
+                  <th className="font-semibold p-3 text-right" title="Expected value per contract, net of Kalshi fees">EV (net)</th>
+                  <th className="font-semibold p-3 text-right" title="Expected profit on a $100 stake, net of fees">Est. profit / $100</th>
                   <th className="font-semibold p-3 text-right">Closes</th>
                   <th className="font-semibold p-3 text-right">24h Vol</th>
                   <th className="font-semibold p-3 text-right">Actions</th>
@@ -270,8 +278,13 @@ export default function AdvantagePage() {
                         {r.side}
                       </span>
                     </td>
-                    <td className="p-3 text-right font-bold text-kalshi-green">
-                      {Math.round((r.side === "yes" ? r.forecastProb : 1 - r.forecastProb) * 100)}%
+                    <td
+                      className="p-3 text-right font-bold text-kalshi-green"
+                      title={`Model ${Math.round(
+                        (r.side === "yes" ? r.forecastProb : 1 - r.forecastProb) * 100,
+                      )}% blended with market price`}
+                    >
+                      {Math.round(r.winProb * 100)}%
                     </td>
                     <td className="p-3 text-right text-kalshi-text">{Math.round(r.price * 100)}¢</td>
                     <td className="p-3 text-right">

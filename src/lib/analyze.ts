@@ -4,7 +4,7 @@ import { MODEL_LABELS } from "@/lib/weather";
 
 let client: Anthropic | null = null;
 
-function getClient(): Anthropic {
+export function getClient(): Anthropic {
   if (!client) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey || apiKey === "your-anthropic-api-key-here") {
@@ -48,7 +48,7 @@ function isRetriableError(err: unknown): boolean {
  * Wraps an async operation with exponential-backoff retries for transient
  * network failures (the most common cause of "Premature close").
  */
-async function callWithRetry<T>(
+export async function callWithRetry<T>(
   fn: () => Promise<T>,
   maxAttempts = 4,
 ): Promise<T> {

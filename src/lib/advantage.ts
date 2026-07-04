@@ -22,9 +22,18 @@ export interface AdvantageRow {
   /** Ask price in dollars for the suggested side. */
   price: number;
   forecastProb: number;
+  /** Model P(YES) blended with the market-implied probability. */
+  blendedProb: number;
+  /** Blended probability that the suggested side wins. */
+  winProb: number;
   marketProb: number | null;
+  /** Kalshi taker fee per contract at this price, in dollars. */
+  feePerContract: number;
+  /** Expected value per contract in dollars, net of fees. */
   evPerContract: number;
-  /** Expected profit on a $100 stake at this price/probability. */
+  /** Risk-adjusted ranking score: evPerContract × sqrt(winProb). */
+  score: number;
+  /** Expected profit on a $100 stake at this price/probability, net of fees. */
   estProfitPer100: number;
   kind: "consensus" | "value";
   rationale: string;
@@ -61,15 +70,18 @@ export async function getAdvantageScan(force = false): Promise<AdvantageScan> {
     // Uncapped per-event suggestions; global filter + sort below
     const suggestions = computeSuggestedActions(e, 10);
     for (const s of suggestions) {
-      if (s.evPerContract < SUGGEST_MIN_EV) continue;
+      // Value picks need the (fee-adjusted) EV floor; consensus picks only breakeven
+      if (s.kind === "value" && s.evPerContract < SUGGEST_MIN_EV) continue;
+      if (s.kind === "consensus" && s.evPerContract < 0) continue;
       const market = marketByTicker.get(s.ticker);
       if (!market) continue;
       if (market.close_time && new Date(market.close_time).getTime() <= now) continue;
 
-      const winProb = s.side === "yes" ? s.forecastProb : 1 - s.forecastProb;
-      // $100 stake buys 100/price contracts; each pays $1 with prob winProb
+      // $100 stake buys 100/price contracts; each pays $1 with the blended
+      // win probability, minus the taker fee per contract
       const contractsPer100 = 100 / s.price;
-      const estProfitPer100 = contractsPer100 * winProb - 100;
+      const estProfitPer100 =
+        contractsPer100 * s.winProb - 100 - contractsPer100 * s.feePerContract;
 
       rows.push({
         eventTicker: e.event.event_ticker,
@@ -81,8 +93,12 @@ export async function getAdvantageScan(force = false): Promise<AdvantageScan> {
         side: s.side,
         price: s.price,
         forecastProb: s.forecastProb,
+        blendedProb: s.blendedProb,
+        winProb: s.winProb,
         marketProb: s.marketProb,
+        feePerContract: s.feePerContract,
         evPerContract: s.evPerContract,
+        score: s.score,
         estProfitPer100: Math.round(estProfitPer100 * 100) / 100,
         kind: s.kind,
         rationale: s.rationale,
@@ -94,7 +110,7 @@ export async function getAdvantageScan(force = false): Promise<AdvantageScan> {
     }
   }
 
-  rows.sort((a, b) => b.evPerContract - a.evPerContract);
+  rows.sort((a, b) => b.score - a.score);
 
   const scan: AdvantageScan = {
     rows: rows.slice(0, 50),
@@ -130,9 +146,11 @@ export async function getAdvantageSummary(scan: AdvantageScan): Promise<string> 
       (r, i) =>
         `${i + 1}. ${r.eventTitle} — "${r.marketTitle}" — buy ${r.side.toUpperCase()} @ ${Math.round(
           r.price * 100,
-        )}¢ | forecast ${Math.round(r.forecastProb * 100)}% YES | EV +${Math.round(
+        )}¢ | model ${Math.round(r.forecastProb * 100)}% YES, blended w/ market ${Math.round(
+          r.blendedProb * 100,
+        )}% | net EV +${Math.round(
           r.evPerContract * 100,
-        )}¢/contract | closes ${r.closeTime} | lead ${r.leadDays ?? "?"}d | city ${r.cityCode ?? "?"} | 24h vol ${Math.round(r.volume24h)}`,
+        )}¢/contract after fees | closes ${r.closeTime} | lead ${r.leadDays ?? "?"}d | city ${r.cityCode ?? "?"} | 24h vol ${Math.round(r.volume24h)}`,
     )
     .join("\n");
 
@@ -140,7 +158,7 @@ export async function getAdvantageSummary(scan: AdvantageScan): Promise<string> 
     model: process.env.ANALYZE_MODEL || "claude-sonnet-4-5",
     max_tokens: 800,
     system:
-      "You are a prediction-market trading analyst. Work ONLY from the data provided — do not use web search or outside real-time information. The expected values come from comparing multi-model weather-forecast probabilities to current Kalshi ask prices.",
+      "You are a prediction-market trading analyst. Work ONLY from the data provided — do not use web search or outside real-time information. The expected values come from multi-model weather-forecast probabilities blended with market-implied probabilities, compared to current Kalshi ask prices, net of taker fees.",
     messages: [
       {
         role: "user",

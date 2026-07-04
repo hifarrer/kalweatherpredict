@@ -137,7 +137,8 @@ export interface MarketLikelihood {
   cityCode?: string; // multi-city: the resolved city
   marketProb?: number; // 0-1, Kalshi market-implied P(YES)
   edge?: number; // probability - marketProb (positive = market underprices YES)
-  decided?: boolean; // pinned to 0/1 by same-day observations
+  decided?: boolean; // irreversibly locked by same-day observations
+  obsBacked?: boolean; // probability blends today's official station observations
 }
 
 /** How strongly the forecast models agree for the target day. */

@@ -26,6 +26,8 @@ export interface SameDayObservation {
   remainingMin: number | null;
   remainingPrecip: number; // forecast precip sum over remaining hours
   source: "station" | "model"; // official NWS station obs vs model-assimilated
+  maxBias: number; // station-vs-model bias applied to remainingMax (°F)
+  minBias: number; // station-vs-model bias applied to remainingMin (°F)
 }
 
 function round2(v: number): number {
@@ -97,7 +99,85 @@ export function summarizeToday(forecast: WeatherForecast): SameDayObservation | 
     remainingMin,
     remainingPrecip: round2(remainingPrecip),
     source: useStation ? "station" : "model",
+    maxBias,
+    minBias,
   };
+}
+
+/**
+ * Outcome forced by the observed portion of the day alone, ignoring the
+ * remaining-hours forecast: the running low only falls, the running high only
+ * rises, and accumulated precip only grows. Returns "yes"/"no" when the
+ * observations have irreversibly locked that answer, else null.
+ *
+ * This is deliberately stricter than "probability pinned to 0/1" — a
+ * probability driven to an extreme by the *remaining-hours forecast* is a
+ * model opinion, not a settled fact, and must not be flagged as decided.
+ */
+export function observationForcedOutcome(
+  obs: SameDayObservation,
+  market: KalshiMarket,
+  metric: WeatherMetric,
+): "yes" | "no" | null {
+  const floor = market.floor_strike;
+  const cap = market.cap_strike;
+  // Station readings are near-exact; model-assimilated estimates can run
+  // several °F off the settlement station, so demand a wide margin.
+  const tol = obs.source === "station" ? 0.5 : 3;
+
+  if (metric === "temperature_low" && obs.observedMin !== null) {
+    const o = obs.observedMin;
+    // Final low ≤ running low: strikes needing the low to stay ABOVE a level
+    // the day has already dipped below are dead; "low ≤ cap" is locked once
+    // the running low is at/below the cap. Nothing can lock "low ≥ floor".
+    switch (market.strike_type) {
+      case "greater":
+      case "greater_or_equal":
+      case "between":
+        if (floor !== null && o < floor - tol) return "no";
+        return null;
+      case "less":
+      case "less_or_equal":
+        if (cap !== null && o <= cap - tol) return "yes";
+        return null;
+    }
+    return null;
+  }
+
+  if (metric === "temperature_high" && obs.observedMax !== null) {
+    const o = obs.observedMax;
+    // Final high ≥ running high (mirror of the low case).
+    switch (market.strike_type) {
+      case "greater":
+      case "greater_or_equal":
+        if (floor !== null && o >= floor + tol) return "yes";
+        return null;
+      case "less":
+      case "less_or_equal":
+      case "between":
+        if (cap !== null && o > cap + tol) return "no";
+        return null;
+    }
+    return null;
+  }
+
+  if (metric === "precipitation") {
+    const o = obs.observedPrecip;
+    switch (market.strike_type) {
+      case "greater":
+      case "greater_or_equal":
+        if (floor !== null && o >= floor) return "yes";
+        return null;
+      case "less":
+      case "less_or_equal":
+      case "between":
+        if (cap !== null && o > cap) return "no";
+        return null;
+    }
+    return null;
+  }
+
+  return null;
 }
 
 /**
@@ -118,9 +198,17 @@ export function sameDayMarketProbability(
   metric: WeatherMetric,
   sigma: number,
 ): { prob: number; decided: boolean } | null {
+  // The station-vs-model bias shift applied to the remaining hours is itself
+  // uncertain — a model that ran 5°F off this morning may not stay 5°F off
+  // tonight — so a large applied bias widens the remaining-hours uncertainty.
+  const appliedBias =
+    metric === "temperature_high" ? obs.maxBias :
+    metric === "temperature_low" ? obs.minBias :
+    0;
   const sigmaRem = Math.max(
     metric === "precipitation" ? 0.05 : 0.8,
     sigma * Math.sqrt(Math.max(0, obs.remainingFraction)),
+    0.6 * Math.abs(appliedBias),
   );
 
   // Uncertainty of the observed running value: near-zero when it comes from
@@ -163,13 +251,22 @@ export function sameDayMarketProbability(
   }
 
   if (!cdfX) return null;
-  return strikeProbFromCdf(cdfX, market);
+  const prob = strikeProbFromCdf(cdfX, market);
+  if (prob === null) return null;
+
+  // "Decided" only when the probability is pinned AND the observed portion of
+  // the day alone locks the answer — extreme probabilities that rest on the
+  // remaining-hours forecast stay undecided (the forecast can be wrong).
+  const forced = observationForcedOutcome(obs, market, metric);
+  const decided =
+    (prob >= 0.999 && forced === "yes") || (prob <= 0.001 && forced === "no");
+  return { prob, decided };
 }
 
 function strikeProbFromCdf(
   cdf: (v: number) => number,
   market: KalshiMarket,
-): { prob: number; decided: boolean } | null {
+): number | null {
   const floor = market.floor_strike;
   const cap = market.cap_strike;
   let prob: number;
@@ -193,6 +290,5 @@ function strikeProbFromCdf(
       return null;
   }
 
-  prob = clamp01(prob);
-  return { prob, decided: prob <= 0.001 || prob >= 0.999 };
+  return clamp01(prob);
 }

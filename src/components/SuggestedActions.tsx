@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { EnrichedEvent, KalshiMarket } from "@/types";
 import { computeSuggestedActions } from "@/lib/suggest";
 import { formatStrike } from "@/lib/format";
@@ -11,9 +11,31 @@ interface SuggestedActionsProps {
   onBuy: (market: KalshiMarket, side: BuySide) => void;
 }
 
+interface ReviewVerdictRow {
+  ticker: string;
+  side: "yes" | "no";
+  verdict: "keep" | "downgrade" | "veto";
+  confidence: number;
+  reason: string;
+}
+
+interface SuggestionReview {
+  verdicts: ReviewVerdictRow[];
+  overall: string;
+  generatedAt: string;
+}
+
+const VERDICT_STYLES: Record<ReviewVerdictRow["verdict"], { label: string; cls: string }> = {
+  keep: { label: "AI: keep", cls: "bg-kalshi-green/15 text-kalshi-green" },
+  downgrade: { label: "AI: caution", cls: "bg-amber-500/15 text-amber-300" },
+  veto: { label: "AI: avoid", cls: "bg-kalshi-red/15 text-kalshi-red" },
+};
+
 /**
  * Algorithmic trade suggestions for the maximized event view:
- * consensus buckets (closest to the forecast) and positive-EV plays.
+ * consensus buckets (closest to the forecast) and positive-EV plays,
+ * ranked by fee-adjusted, risk-weighted expected value. An on-demand
+ * "AI review" button has Claude critique each pick (cached server-side).
  */
 export default function SuggestedActions({ enriched, onBuy }: SuggestedActionsProps) {
   const suggestions = useMemo(() => computeSuggestedActions(enriched), [enriched]);
@@ -22,16 +44,62 @@ export default function SuggestedActions({ enriched, onBuy }: SuggestedActionsPr
     [enriched],
   );
 
+  const [review, setReview] = useState<SuggestionReview | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const verdictByKey = useMemo(() => {
+    const map = new Map<string, ReviewVerdictRow>();
+    for (const v of review?.verdicts ?? []) map.set(`${v.ticker}:${v.side}`, v);
+    return map;
+  }, [review]);
+
+  const runReview = async () => {
+    setReviewing(true);
+    setReviewError(null);
+    try {
+      const res = await fetch("/api/suggest/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventTicker: enriched.event.event_ticker }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Review failed (${res.status})`);
+      setReview(data);
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "Review failed");
+    } finally {
+      setReviewing(false);
+    }
+  };
+
   return (
     <section>
-      <h3 className="text-xs font-bold uppercase tracking-wide text-kalshi-muted mb-2">
-        Suggested actions
-      </h3>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-bold uppercase tracking-wide text-kalshi-muted">
+          Suggested actions
+        </h3>
+        {suggestions.length > 0 && (
+          <button
+            onClick={runReview}
+            disabled={reviewing}
+            className="px-2.5 py-1 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-purple-200 text-[10px] font-semibold transition-colors disabled:opacity-40"
+            title="Have Claude critique each suggestion against the forecast and observations"
+          >
+            {reviewing ? "Reviewing…" : review ? "Re-run AI review" : "AI review"}
+          </button>
+        )}
+      </div>
+      {reviewError && <p className="text-[11px] text-kalshi-red mb-2">{reviewError}</p>}
+      {review?.overall && (
+        <p className="text-[11px] text-purple-200/90 leading-snug mb-2">{review.overall}</p>
+      )}
       {suggestions.length === 0 ? (
         <div className="rounded-xl border border-kalshi-border bg-black/20 p-4">
           <p className="text-xs text-kalshi-muted">
-            No high-confidence suggestions for this event — no liquid market offers
-            meaningful expected value at current prices.
+            No high-confidence suggestions for this event — after fees and
+            blending with market prices, no liquid market offers meaningful
+            expected value at a realistic win probability.
           </p>
         </div>
       ) : (
@@ -40,6 +108,8 @@ export default function SuggestedActions({ enriched, onBuy }: SuggestedActionsPr
             const market = marketByTicker.get(s.ticker);
             const sideColor = s.side === "yes" ? "text-kalshi-green" : "text-kalshi-red";
             const evPositive = s.evPerContract > 0;
+            const verdict = verdictByKey.get(`${s.ticker}:${s.side}`);
+            const verdictStyle = verdict ? VERDICT_STYLES[verdict.verdict] : null;
             return (
               <div
                 key={`${s.ticker}:${s.side}`}
@@ -63,7 +133,7 @@ export default function SuggestedActions({ enriched, onBuy }: SuggestedActionsPr
                         ? "text-kalshi-green bg-kalshi-green/15"
                         : "text-kalshi-muted bg-white/5"
                     }`}
-                    title="Expected value per contract at the current ask"
+                    title="Expected value per contract at the current ask, after Kalshi fees"
                   >
                     EV {evPositive ? "+" : ""}
                     {Math.round(s.evPerContract * 100)}¢
@@ -77,11 +147,24 @@ export default function SuggestedActions({ enriched, onBuy }: SuggestedActionsPr
                   >
                     {s.kind}
                   </span>
+                  {verdictStyle && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${verdictStyle.cls}`}
+                      title={verdict?.reason || undefined}
+                    >
+                      {verdictStyle.label}
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-kalshi-muted leading-snug">{s.rationale}</p>
+                {verdict?.reason && verdict.verdict !== "keep" && (
+                  <p className="text-[11px] text-amber-200/80 leading-snug">{verdict.reason}</p>
+                )}
                 <div className="flex items-center justify-between mt-auto">
                   <span className="text-[10px] text-kalshi-muted">
-                    Ask {Math.round(s.price * 100)}¢ · FC {Math.round(s.forecastProb * 100)}%
+                    Ask {Math.round(s.price * 100)}¢ + {Math.round(s.feePerContract * 100)}¢ fee
+                    {" · "}Model {Math.round((s.side === "yes" ? s.forecastProb : 1 - s.forecastProb) * 100)}%
+                    {" · "}Blend {Math.round(s.winProb * 100)}%
                     {s.marketProb != null && ` · MK ${Math.round(s.marketProb * 100)}%`}
                   </span>
                   {market && (

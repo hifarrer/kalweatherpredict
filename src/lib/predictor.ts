@@ -502,6 +502,78 @@ export function computeMarketProbability(
   return Math.max(0, Math.min(1, prob));
 }
 
+// --- Same-day hard tail clamp ----------------------------------------------
+
+/** Margin (°F) beyond the running value before a strike is deemed unreachable. */
+const SAME_DAY_CLAMP_MARGIN = 3;
+/** Probability ceiling for unreachable same-day strikes. */
+const SAME_DAY_CLAMP_PROB = 0.02;
+
+/**
+ * Cap the probability of same-day temperature strikes the day has already put
+ * out of reach: today's running low only goes down and running high only goes
+ * up, so e.g. "low ≥ 84" with a forecast low of 79 is effectively impossible.
+ * Only applied when hourly observation blending is UNAVAILABLE — the plain
+ * Normal model's tails would otherwise keep such strikes alive. With
+ * observations, the blending model is authoritative (a strike above the
+ * running low may genuinely still be in play on a hot day).
+ */
+export function sameDayTailClampProb(
+  probability: number,
+  market: KalshiMarket,
+  metric: WeatherMetric,
+  forecastValue: number,
+): number {
+  if (metric !== "temperature_low" && metric !== "temperature_high") return probability;
+
+  const floor = market.floor_strike;
+  const cap = market.cap_strike;
+  let unreachable = false;
+
+  if (metric === "temperature_low") {
+    // Strikes requiring the day's low to end up well ABOVE the current
+    // forecast/observed low can no longer happen.
+    switch (market.strike_type) {
+      case "greater":
+      case "greater_or_equal":
+      case "between":
+        unreachable = floor !== null && floor >= forecastValue + SAME_DAY_CLAMP_MARGIN;
+        break;
+    }
+  } else {
+    // temperature_high: strikes requiring the day's high to stay well BELOW
+    // the current forecast/observed high can no longer happen.
+    switch (market.strike_type) {
+      case "less":
+      case "less_or_equal":
+      case "between":
+        unreachable = cap !== null && cap <= forecastValue - SAME_DAY_CLAMP_MARGIN;
+        break;
+    }
+  }
+
+  return unreachable ? Math.min(probability, SAME_DAY_CLAMP_PROB) : probability;
+}
+
+/** Apply sameDayTailClampProb across an event's likelihoods, fixing edges. */
+function applySameDayTailClamp(
+  likelihoods: MarketLikelihood[],
+  markets: KalshiMarket[],
+  metric: WeatherMetric,
+  forecastValue: number,
+): void {
+  const byTicker = new Map(markets.map((m) => [m.ticker, m]));
+  for (const ml of likelihoods) {
+    const m = byTicker.get(ml.ticker);
+    if (!m) continue;
+    const clamped = sameDayTailClampProb(ml.probability, m, metric, forecastValue);
+    if (clamped !== ml.probability) {
+      ml.probability = clamped;
+      if (ml.marketProb != null) ml.edge = clamped - ml.marketProb;
+    }
+  }
+}
+
 export function computeMarketLikelihoods(
   forecastValue: number,
   markets: KalshiMarket[],
@@ -668,10 +740,19 @@ export function predictEvent(
         marketProb,
         edge: probability - marketProb,
         decided: blended?.decided || undefined,
+        obsBacked: (blended && obs.source === "station") || undefined,
       };
     });
   } else {
     marketLikelihoods = computeMarketLikelihoods(forecastValue, event.markets, metric, sigma);
+
+    // No observations for a same-day market: the plain Normal model's tails
+    // would keep already-out-of-reach strikes alive, so clamp them near zero.
+    // (With observations, the blending model handles this correctly — a strike
+    // above the running low may genuinely still be in play.)
+    if (target.leadDays === 0) {
+      applySameDayTailClamp(marketLikelihoods, event.markets, metric, forecastValue);
+    }
   }
 
   const decidedByTicker = new Map(
@@ -832,7 +913,12 @@ export function predictMultiCityEvent(
       }
     }
 
-    const prob = blended?.prob ?? computeMarketProbability(forecastValue, m, metric, sigma);
+    let prob = blended?.prob ?? computeMarketProbability(forecastValue, m, metric, sigma);
+    // Clamp unreachable strikes only when observation blending didn't run —
+    // with observations the blended model already treats the running value as fact.
+    if (target.leadDays === 0 && !blended) {
+      prob = sameDayTailClampProb(prob, m, metric, forecastValue);
+    }
     const marketProb = impliedMarketProb(m);
     marketLikelihoods.push({
       ticker: m.ticker,
@@ -842,6 +928,7 @@ export function predictMultiCityEvent(
       marketProb,
       edge: prob - marketProb,
       decided: blended?.decided || undefined,
+      obsBacked: (blended && forecast.stationObs && forecast.stationObs.count > 0) || undefined,
     });
 
     if (prob >= MULTI_CITY_MATCH_THRESHOLD) {

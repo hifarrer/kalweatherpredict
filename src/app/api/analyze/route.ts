@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getEvent } from "@/lib/kalshi";
-import { detectCity, CITY_MAP } from "@/lib/cities";
+import { detectCity } from "@/lib/cities";
 import { getForecast } from "@/lib/weather";
+import { enrichSingleEvent } from "@/lib/enrich";
 import { analyzeEvent, isAiConfigured } from "@/lib/analyze";
 
 export const dynamic = "force-dynamic";
@@ -31,13 +32,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
     }
 
-    // 2. Detect city and fetch forecast
+    // 2. Detect city, enrich (computes probabilities/edges), fetch forecast
     const primaryRules = event.markets?.[0]?.rules_primary;
     const city = detectCity(event.title, event.series_ticker, primaryRules);
-    const forecast = city ? await getForecast(city) : null;
+    const [enriched, forecast] = await Promise.all([
+      enrichSingleEvent(event, city?.code ?? null),
+      city ? getForecast(city) : Promise.resolve(null),
+    ]);
 
-    // 3. Run AI analysis
-    const result = await analyzeEvent(event, forecast);
+    // 3. Run AI analysis with the full enriched context
+    const result = await analyzeEvent(enriched, forecast);
 
     return NextResponse.json(result);
   } catch (err) {

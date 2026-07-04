@@ -32,6 +32,52 @@ export const events = pgTable("events", {
 });
 
 /**
+ * Application users.
+ *
+ * Single admin user today (seeded from ADMIN_EMAIL/ADMIN_PASSWORD on boot);
+ * the table exists so multi-user support can be added without a schema
+ * rework. The kalshi_* columns are reserved for future per-user trading
+ * credentials (currently trading keys come from env vars).
+ */
+export const users = pgTable("users", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: text("role").notNull().default("admin"),
+  kalshiApiKeyId: text("kalshi_api_key_id"),
+  kalshiPrivateKeyEnc: text("kalshi_private_key_enc"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * Local audit log of orders placed through the app.
+ *
+ * A row is inserted before the Kalshi API call (client_order_id is generated
+ * server-side for idempotency) and updated with Kalshi's response after.
+ */
+export const orders = pgTable(
+  "orders",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    clientOrderId: text("client_order_id").notNull().unique(),
+    userId: integer("user_id"),
+    ticker: text("ticker").notNull(),
+    eventTicker: text("event_ticker").notNull(),
+    side: text("side").notNull(), // "yes" | "no"
+    action: text("action").notNull().default("buy"),
+    type: text("type").notNull().default("market"),
+    count: integer("count").notNull(),
+    maxCostCents: integer("max_cost_cents"),
+    avgFillPriceCents: integer("avg_fill_price_cents"),
+    status: text("status").notNull().default("pending"), // pending | executed | canceled | failed
+    kalshiOrderId: text("kalshi_order_id"),
+    response: jsonb("response"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("orders_event_idx").on(t.eventTicker)],
+);
+
+/**
  * Key/value store for sync metadata (last sync time, weather series list, etc.)
  */
 export const syncMeta = pgTable("sync_meta", {

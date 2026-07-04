@@ -1,5 +1,6 @@
 import { KalshiMarket, MarketLikelihood, ModelAgreement, WeatherMetric } from "@/types";
 import { impliedMarketProb } from "@/lib/predictor";
+import { formatStrike, formatVolume } from "@/lib/format";
 
 interface MarketsListProps {
   markets: KalshiMarket[] | undefined;
@@ -190,29 +191,3 @@ export default function MarketsList({
   );
 }
 
-function formatStrike(m: KalshiMarket, subcategory: WeatherMetric): string {
-  if (!m.strike_type) return "";
-  const unit =
-    subcategory === "precipitation" || subcategory === "snowfall" ? "in" : "°F";
-  switch (m.strike_type) {
-    case "greater":
-    case "greater_or_equal":
-      return m.floor_strike !== null ? `> ${m.floor_strike}${unit}` : "";
-    case "less":
-    case "less_or_equal":
-      return m.cap_strike !== null ? `< ${m.cap_strike}${unit}` : "";
-    case "between":
-      if (m.floor_strike !== null && m.cap_strike !== null) {
-        return `${m.floor_strike}-${m.cap_strike}${unit}`;
-      }
-      return "";
-    default:
-      return "";
-  }
-}
-
-function formatVolume(vol: number): string {
-  if (vol >= 1_000_000) return `${(vol / 1_000_000).toFixed(1)}M`;
-  if (vol >= 1_000) return `${(vol / 1_000).toFixed(1)}K`;
-  return String(Math.round(vol));
-}

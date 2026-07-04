@@ -9,6 +9,7 @@ import PredictionBadge from "./PredictionBadge";
 import WeatherChip from "./WeatherChip";
 import MarketsList from "./MarketsList";
 import AiAnalysisModal from "./AiAnalysisModal";
+import EventDetailModal from "./EventDetailModal";
 import ForecastPanel from "./ForecastPanel";
 
 interface EventCardProps {
@@ -20,6 +21,7 @@ interface EventCardProps {
 
 export default function EventCard({ enriched, forecast, onRefreshed }: EventCardProps) {
   const [aiOpen, setAiOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [forecastOpen, setForecastOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -123,16 +125,15 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
           </div>
         )}
 
-        {/* Title */}
+        {/* Title — opens the maximized event view */}
         <div className="px-4 pb-2">
-          <a
-            href={kalshiUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block text-sm font-bold text-kalshi-text hover:text-kalshi-orange leading-snug line-clamp-2 transition-colors"
+          <button
+            onClick={() => setDetailOpen(true)}
+            title="Maximize event details"
+            className="block w-full text-left text-sm font-bold text-kalshi-text hover:text-kalshi-orange leading-snug line-clamp-2 transition-colors"
           >
             {event.title}
-          </a>
+          </button>
           {event.sub_title && (
             <p className="text-xs text-kalshi-muted mt-0.5">{event.sub_title}</p>
           )}
@@ -257,6 +258,18 @@ export default function EventCard({ enriched, forecast, onRefreshed }: EventCard
         eventTitle={event.title}
         isOpen={aiOpen}
         onClose={() => setAiOpen(false)}
+      />
+
+      {/* Maximized event view */}
+      <EventDetailModal
+        enriched={localEnriched}
+        forecast={forecast}
+        isOpen={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        onRefreshed={(updated) => {
+          setLocalEnriched(updated);
+          onRefreshed?.(updated);
+        }}
       />
     </>
   );

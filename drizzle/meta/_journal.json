@@ -15,6 +15,13 @@
       "when": 1783096088576,
       "tag": "0001_charming_typhoid_mary",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783185187365,
+      "tag": "0002_striped_jane_foster",
+      "breakpoints": true
     }
   ]
 }

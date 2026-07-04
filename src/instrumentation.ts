@@ -13,6 +13,9 @@ export async function register() {
       console.error("DB migration failed:", e),
     );
 
+    const { seedAdmin } = await import("./lib/seedAdmin");
+    await seedAdmin().catch((e) => console.error("Admin seeding failed:", e));
+
     const { startSyncScheduler } = await import("./lib/sync");
     startSyncScheduler();
   }

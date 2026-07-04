@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { AiAnalysisResult, KalshiEvent, WeatherForecast } from "@/types";
+import { AiAnalysisResult, EnrichedEvent, WeatherForecast } from "@/types";
+import { MODEL_LABELS } from "@/lib/weather";
 
 let client: Anthropic | null = null;
 
@@ -75,40 +76,97 @@ export function isAiConfigured(): boolean {
   return !!key && key !== "your-anthropic-api-key-here";
 }
 
-const SYSTEM_PROMPT = `You are an expert weather-prediction analyst specializing in Kalshi prediction market weather events. Your job is to analyze weather forecast data, market structure, and any relevant climatology context to determine the most likely outcome of a weather prediction market.
+const SYSTEM_PROMPT = `You are an expert weather-prediction analyst specializing in Kalshi prediction market weather events. Your job is to analyze weather forecast data, market structure, and pricing to determine the most likely outcome of a weather prediction market.
+
+Work ONLY from the data provided in the prompt. Do NOT use web search or rely on real-time information you cannot see here — everything needed (multi-model forecasts, official station observations, market prices, and computed probabilities) is included.
 
 You should consider:
-1. Official weather forecasts (NOAA, NWS, ECMWF data provided to you)
-2. Historical climate patterns and seasonal norms
-3. Forecast uncertainty and model spread
-4. Current market prices as a signal of crowd wisdom
-5. Any relevant news or extreme weather events
+1. The multi-model ensemble forecast (ECMWF, GFS, NBM, HRRR) and its spread — disagreement means uncertainty
+2. Official NWS settlement-station observations when present — these are authoritative for same-day markets (Kalshi settles on them)
+3. The app's computed forecast-implied probabilities — they come from a normal-CDF model around the ensemble median with an empirically calibrated sigma; treat them as one input, not ground truth
+4. Current market prices as crowd wisdom, and the edge (forecast minus market probability) as a value signal
+5. Seasonal norms and climatological plausibility
 
 Provide a clear, actionable recommendation with honest confidence levels.`;
 
 /**
  * Run a deep AI analysis on a Kalshi weather event using Claude.
+ *
+ * Receives the full EnrichedEvent so the prompt can include the app's own
+ * computed probabilities/edges alongside raw prices, plus per-model
+ * forecasts and official station observations — everything needed so the
+ * model never has to guess or search.
  */
 export async function analyzeEvent(
-  event: KalshiEvent,
+  enriched: EnrichedEvent,
   forecast: WeatherForecast | null,
 ): Promise<AiAnalysisResult> {
   const anthropic = getClient();
+  const { event, prediction } = enriched;
 
+  const llMap = new Map(
+    (prediction?.marketLikelihoods ?? []).map((ll) => [ll.ticker, ll]),
+  );
+
+  // All markets (capped at 25 by 24h volume to bound tokens), with both
+  // sides' bid/ask and the app's computed numbers per market.
   const marketInfo = (event.markets || [])
     .sort((a, b) => parseFloat(b.volume_24h_fp || "0") - parseFloat(a.volume_24h_fp || "0"))
-    .slice(0, 10)
+    .slice(0, 25)
     .map((m, i) => {
       const strike = m.strike_type
         ? `[${m.strike_type}: floor=${m.floor_strike ?? "N/A"}, cap=${m.cap_strike ?? "N/A"}]`
         : "";
-      return `  ${i + 1}. ${m.yes_sub_title || m.ticker}
-     Strike: ${strike}
-     YES bid: ${m.yes_bid_dollars} | Last price: ${m.last_price_dollars}
-     24h volume: ${m.volume_24h_fp} | Total volume: ${m.volume_fp}
-     Rules: ${m.rules_primary}`;
+      const ll = llMap.get(m.ticker);
+      const computed = ll
+        ? ` | Forecast P(YES): ${Math.round(ll.probability * 100)}%${
+            ll.marketProb != null ? ` | Market P(YES): ${Math.round(ll.marketProb * 100)}%` : ""
+          }${ll.edge != null ? ` | Edge: ${ll.edge > 0 ? "+" : ""}${Math.round(ll.edge * 100)}pp` : ""}${
+            ll.decided ? " | DECIDED by today's observations" : ""
+          }`
+        : "";
+      return `  ${i + 1}. ${m.yes_sub_title || m.ticker} ${strike}
+     YES bid/ask: ${m.yes_bid_dollars}/${m.yes_ask_dollars} | NO bid/ask: ${m.no_bid_dollars}/${m.no_ask_dollars} | Last: ${m.last_price_dollars} | 24h vol: ${m.volume_24h_fp}${computed}`;
     })
     .join("\n");
+
+  // App prediction summary
+  const predictionInfo = prediction
+    ? `Verdict: ${prediction.verdict}
+Forecast value: ${prediction.forecastValue ?? "N/A"} ${prediction.unit}
+Target date: ${prediction.targetDate ?? "N/A"} (lead: ${prediction.leadDays ?? "?"} days)
+Sigma (uncertainty stddev): ${prediction.sigma?.toFixed(2) ?? "N/A"}
+Cross-model spread: ${prediction.modelSpread?.toFixed(2) ?? "N/A"} | Model agreement: ${prediction.agreement ?? "unknown"}
+Detail: ${prediction.detail}`
+    : "No model prediction available.";
+
+  // Per-model forecast for the target date
+  const targetDay =
+    (prediction?.targetDate
+      ? forecast?.daily.find((d) => d.date === prediction.targetDate)
+      : undefined) ?? forecast?.daily[0];
+  const byModelInfo =
+    targetDay?.byModel && Object.keys(targetDay.byModel).length > 0
+      ? Object.entries(targetDay.byModel)
+          .map(
+            ([model, v]) =>
+              `  ${MODEL_LABELS[model] ?? model}: High ${v.max ?? "—"}°F / Low ${v.min ?? "—"}°F / Precip ${v.precip ?? "—"}" / Snow ${v.snow ?? "—"}"`,
+          )
+          .join("\n") +
+        `\n  ENSEMBLE MEDIAN: High ${targetDay.max}°F / Low ${targetDay.min}°F` +
+        (targetDay.spread
+          ? `\n  Cross-model spread (σ): high ±${targetDay.spread.max.toFixed(1)}°F, low ±${targetDay.spread.min.toFixed(1)}°F, precip ±${targetDay.spread.precip.toFixed(2)}"`
+          : "")
+      : "  Per-model breakdown not available.";
+
+  // Official settlement-station observations (same-day)
+  const obs = forecast?.stationObs;
+  const obsInfo =
+    obs && (obs.max !== null || obs.min !== null)
+      ? `Station ${forecast?.stationId ?? "?"} (official settlement station — AUTHORITATIVE for same-day markets):
+  Observed max so far today: ${obs.max ?? "—"}°F | Observed min: ${obs.min ?? "—"}°F | ${obs.count} observations
+  ${prediction?.observedSoFar !== undefined ? `Running metric value: ${prediction.observedSoFar}` : ""}${prediction?.alreadyDecided ? "\n  NOTE: today's observations have already locked this outcome." : ""}`
+      : "No same-day station observations (event is not for today, or unavailable).";
 
   const forecastInfo = forecast
     ? forecast.daily
@@ -120,20 +178,29 @@ export async function analyzeEvent(
         .join("\n")
     : "  No forecast data available.";
 
-  const userPrompt = `Analyze this Kalshi weather prediction event and tell me the most likely outcome.
+  const userPrompt = `Analyze this Kalshi weather prediction event and tell me the most likely outcome. All data you need is below — do not search for more.
 
 EVENT: ${event.title}
 SUB-TITLE: ${event.sub_title}
 SERIES: ${event.series_ticker}
 EVENT TICKER: ${event.event_ticker}
 
-MARKETS (top 10 by volume):
+APP PREDICTION MODEL SUMMARY:
+${predictionInfo}
+
+MARKETS (up to 25 by volume, prices in dollars):
 ${marketInfo}
 
-WEATHER FORECAST (next 7 days):
+PER-MODEL FORECAST FOR TARGET DATE (${targetDay?.date ?? "unknown"}):
+${byModelInfo}
+
+SAME-DAY STATION OBSERVATIONS:
+${obsInfo}
+
+7-DAY CONSENSUS FORECAST:
 ${forecastInfo}
 
-Based on the forecast data, market structure, and your knowledge of weather patterns, provide:
+Based on the data above, provide:
 1. The most likely YES/NO outcome or which specific market bucket is most likely
 2. Your confidence level (High/Medium/Low)
 3. Key reasoning for your conclusion
@@ -149,12 +216,18 @@ Format your response EXACTLY as this JSON (no markdown fences, no extra text bef
 
   const response = await callWithRetry(() =>
     anthropic.messages.create({
-      model: "claude-sonnet-4-5",
-      max_tokens: 1024,
+      model: process.env.ANALYZE_MODEL || "claude-sonnet-4-5",
+      max_tokens: 1500,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userPrompt }],
     }),
   );
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log(
+      `[analyze] ${event.event_ticker}: input ${response.usage.input_tokens} tok, output ${response.usage.output_tokens} tok`,
+    );
+  }
 
   const text = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === "text")

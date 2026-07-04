@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { EnrichedEvent, KalshiMarket } from "@/types";
+import { EnrichedEvent, KalshiMarket, WeatherForecast } from "@/types";
 import Header from "@/components/Header";
-import TradeModal from "@/components/TradeModal";
 import EventDetailModal from "@/components/EventDetailModal";
 import { BuySide } from "@/components/MarketsTable";
 
@@ -42,8 +41,8 @@ export default function AdvantagePage() {
   const [error, setError] = useState<string | null>(null);
   const [minEv, setMinEv] = useState(5); // cents
   const [leadFilter, setLeadFilter] = useState<LeadFilter>("all");
-  const [trade, setTrade] = useState<{ row: AdvantageRow } | null>(null);
   const [detail, setDetail] = useState<EnrichedEvent | null>(null);
+  const [detailForecast, setDetailForecast] = useState<WeatherForecast | null>(null);
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -82,14 +81,25 @@ export default function AdvantagePage() {
 
   const bestEv = rows.length > 0 ? Math.round(rows[0].evPerContract * 100) : 0;
 
-  const openDetails = async (eventTicker: string) => {
+  const openDetails = async (eventTicker: string, cityCode: string | null) => {
     setDetailLoading(eventTicker);
     try {
-      const res = await fetch(`/api/events/${encodeURIComponent(eventTicker)}`, {
-        cache: "no-store",
-      });
-      const data = await res.json();
-      if (data.event) setDetail(data.event);
+      const [eventRes, weatherRes] = await Promise.all([
+        fetch(`/api/events/${encodeURIComponent(eventTicker)}`, { cache: "no-store" }),
+        cityCode
+          ? fetch(`/api/weather?cities=${encodeURIComponent(cityCode)}`).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      const data = await eventRes.json();
+      if (data.event) {
+        let forecast: WeatherForecast | null = null;
+        if (weatherRes?.ok) {
+          const weatherData = await weatherRes.json().catch(() => null);
+          forecast = weatherData?.forecasts?.[cityCode!] ?? null;
+        }
+        setDetailForecast(forecast);
+        setDetail(data.event);
+      }
     } finally {
       setDetailLoading(null);
     }
@@ -277,17 +287,7 @@ export default function AdvantagePage() {
                     <td className="p-3 text-right">
                       <div className="flex items-center gap-1.5 justify-end">
                         <button
-                          onClick={() => setTrade({ row: r })}
-                          className={`px-2.5 py-1 rounded-md text-[10px] font-bold text-white transition-colors ${
-                            r.side === "yes"
-                              ? "bg-kalshi-green hover:bg-green-500"
-                              : "bg-kalshi-red hover:bg-red-500"
-                          }`}
-                        >
-                          Buy {r.side.toUpperCase()}
-                        </button>
-                        <button
-                          onClick={() => openDetails(r.eventTicker)}
+                          onClick={() => openDetails(r.eventTicker, r.cityCode)}
                           disabled={detailLoading === r.eventTicker}
                           className="px-2.5 py-1 rounded-md text-[10px] font-medium border border-kalshi-border text-kalshi-muted hover:text-kalshi-text hover:bg-white/5 transition-colors disabled:opacity-50"
                         >
@@ -303,23 +303,15 @@ export default function AdvantagePage() {
         )}
       </main>
 
-      {trade && (
-        <TradeModal
-          market={trade.row.market}
-          side={trade.row.side}
-          eventTicker={trade.row.eventTicker}
-          eventTitle={trade.row.eventTitle}
-          isOpen
-          onClose={() => setTrade(null)}
-        />
-      )}
-
       {detail && (
         <EventDetailModal
           enriched={detail}
-          forecast={null}
+          forecast={detailForecast}
           isOpen
-          onClose={() => setDetail(null)}
+          onClose={() => {
+            setDetail(null);
+            setDetailForecast(null);
+          }}
           onRefreshed={(updated) => setDetail(updated)}
         />
       )}

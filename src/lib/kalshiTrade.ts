@@ -49,17 +49,49 @@ export function getKalshiCredentials(_userId?: number): KalshiCredentials | null
   return cachedCreds;
 }
 
+// --- Server-time offset ---
+// Kalshi rejects signatures whose timestamp drifts more than ~30s from its
+// clock (header_timestamp_expired). Local clocks can drift (this machine has
+// been observed >1 min behind with the Windows Time service disabled), so we
+// derive an offset from Kalshi's own Date response header and sign with
+// corrected time.
+let timeOffsetMs = 0;
+let offsetSyncedAt = 0;
+const OFFSET_TTL_MS = 10 * 60 * 1000;
+
+async function syncServerTime(force = false): Promise<void> {
+  const now = Date.now();
+  if (!force && now - offsetSyncedAt < OFFSET_TTL_MS) return;
+  try {
+    const res = await fetch(`${TRADE_API_BASE}/exchange/status`, { cache: "no-store" });
+    const dateHeader = res.headers.get("date");
+    if (dateHeader) {
+      // Date header has second precision; +500ms centers the estimate
+      timeOffsetMs = new Date(dateHeader).getTime() + 500 - Date.now();
+      offsetSyncedAt = Date.now();
+      if (Math.abs(timeOffsetMs) > 5_000) {
+        console.warn(
+          `[kalshiTrade] local clock is ${Math.round(timeOffsetMs / 1000)}s off Kalshi server time; compensating`,
+        );
+      }
+    }
+  } catch (err) {
+    console.warn("[kalshiTrade] server time sync failed, using local clock:", err);
+  }
+}
+
 /**
  * Sign a request per Kalshi's scheme: RSA-PSS-SHA256 over
  * `${timestampMs}${METHOD}${path}` where path includes /trade-api/v2
- * and excludes the query string.
+ * and excludes the query string. Timestamp is corrected by the measured
+ * server-time offset.
  */
 function signRequest(
   creds: KalshiCredentials,
   method: string,
   path: string,
 ): { timestamp: string; signature: string } {
-  const timestamp = String(Date.now());
+  const timestamp = String(Date.now() + timeOffsetMs);
   const message = `${timestamp}${method}${path}`;
   const sign = createSign("sha256");
   sign.update(message);
@@ -95,32 +127,46 @@ async function tradeRequest<T>(
     throw new KalshiTradeError(503, null, "Kalshi trading is not configured");
   }
 
-  const pathOnly = pathWithQuery.split("?")[0];
-  const { timestamp, signature } = signRequest(
-    creds,
-    method,
-    `${API_PATH_PREFIX}${pathOnly}`,
-  );
+  await syncServerTime();
 
-  const res = await fetch(`${TRADE_API_BASE}${pathWithQuery}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      "KALSHI-ACCESS-KEY": creds.apiKeyId,
-      "KALSHI-ACCESS-SIGNATURE": signature,
-      "KALSHI-ACCESS-TIMESTAMP": timestamp,
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    cache: "no-store",
-  });
+  const attempt = async (): Promise<{ res: Response; json: unknown }> => {
+    const pathOnly = pathWithQuery.split("?")[0];
+    const { timestamp, signature } = signRequest(
+      creds,
+      method,
+      `${API_PATH_PREFIX}${pathOnly}`,
+    );
 
-  const text = await res.text();
-  let json: unknown = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    // non-JSON error body; keep raw text
-    json = { raw: text };
+    const res = await fetch(`${TRADE_API_BASE}${pathWithQuery}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "KALSHI-ACCESS-KEY": creds.apiKeyId,
+        "KALSHI-ACCESS-SIGNATURE": signature,
+        "KALSHI-ACCESS-TIMESTAMP": timestamp,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      cache: "no-store",
+    });
+
+    const text = await res.text();
+    let json: unknown = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      // non-JSON error body; keep raw text
+      json = { raw: text };
+    }
+    return { res, json };
+  };
+
+  let { res, json } = await attempt();
+
+  // A stale/newly-drifted clock shows up as header_timestamp_expired;
+  // resync against the server clock once and retry.
+  if (!res.ok && isTimestampError(json)) {
+    await syncServerTime(true);
+    ({ res, json } = await attempt());
   }
 
   if (!res.ok) {
@@ -131,6 +177,14 @@ async function tradeRequest<T>(
     );
   }
   return json as T;
+}
+
+function isTimestampError(body: unknown): boolean {
+  const code =
+    body && typeof body === "object" && "error" in body
+      ? (body as { error?: { code?: string } }).error?.code
+      : undefined;
+  return code === "header_timestamp_expired";
 }
 
 function friendlyKalshiError(status: number, body: unknown): string {

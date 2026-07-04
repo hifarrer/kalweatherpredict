@@ -6,7 +6,7 @@
 
 - [x] Phase 1 — Authentication (users table, login, middleware) — shipped 2026-07-04
 - [x] Phase 2 — Maximized event view modal — shipped 2026-07-04
-- [x] Phase 3 — Kalshi trading (market buy orders) — shipped 2026-07-04 (live order untested until KALSHI_API_KEY_ID / KALSHI_PRIVATE_KEY_BASE64 are set in .env)
+- [x] Phase 3 — Kalshi trading (market buy orders) — shipped 2026-07-04; live order verified (1 contract filled @ 2¢). NOTE: uses Kalshi's V2 order surface `POST /portfolio/events/orders` (single YES-book: bid=buy YES, ask at 1−p = buy NO; market orders emulated as immediate-or-cancel at ask+5¢ buffer). The old `/portfolio/orders` returns "Please switch to the V2 endpoints".
 - [x] Phase 4 — Suggested actions — shipped 2026-07-04
 - [x] Phase 5 — Deep AI analysis improvements — shipped 2026-07-04 (~1¢/call: 1.8k in / 0.3k out tokens)
 - [x] Phase 6 — AI Advantage page + nav — shipped 2026-07-04

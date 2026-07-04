@@ -216,40 +216,83 @@ export interface CreateOrderParams {
   clientOrderId: string;
   side: "yes" | "no";
   count: number;
-  /** Worst-case total spend in cents (market-order overspend protection). */
-  buyMaxCostCents: number;
+  /** Worst acceptable price for the chosen side, in cents (ask + buffer). */
+  maxPriceCents: number;
 }
 
-export interface KalshiOrderResponse {
-  order: {
-    order_id: string;
-    client_order_id: string;
-    ticker: string;
-    status: string; // resting | executed | canceled | pending
-    side: string;
-    action: string;
-    type: string;
-    yes_price?: number;
-    no_price?: number;
-    taker_fill_count?: number;
-    taker_fill_cost?: number;
-    [key: string]: unknown;
-  };
+/** Normalized result of a V2 order placement. */
+export interface PlacedOrder {
+  orderId: string;
+  clientOrderId: string;
+  /** Contracts filled immediately (IOC cancels the rest). */
+  fillCount: number;
+  remainingCount: number;
+  /** Average price paid for the chosen side (yes OR no), in cents. */
+  avgFillPriceCents: number | null;
+  /** Fee per contract in cents, when reported. */
+  avgFeeCents: number | null;
+  status: "executed" | "partial" | "canceled";
+  raw: unknown;
 }
 
-/** Place a market buy order. */
-export async function createOrder(params: CreateOrderParams): Promise<KalshiOrderResponse> {
-  return tradeRequest<KalshiOrderResponse>("POST", "/portfolio/orders", {
+interface CreateOrderV2Response {
+  order_id: string;
+  client_order_id: string;
+  fill_count: string;
+  remaining_count: string;
+  average_fill_price?: string;
+  average_fee_paid?: string;
+  ts_ms?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Place an aggressive immediate-or-cancel buy — the V2 equivalent of a
+ * market order with overspend protection.
+ *
+ * V2 uses a single YES-side book: `bid` buys YES; buying NO is expressed as
+ * an `ask` (sell YES) at price 1 − noPrice. The IOC limit price IS the cost
+ * cap — fills can't exceed it and the unfilled remainder cancels.
+ */
+export async function createOrder(params: CreateOrderParams): Promise<PlacedOrder> {
+  const maxPrice = Math.min(99, Math.max(1, params.maxPriceCents)) / 100;
+  const isYes = params.side === "yes";
+  // YES-book limit price: aggressive = higher for bids, lower for asks
+  const yesPrice = isYes ? maxPrice : 1 - maxPrice;
+
+  const body = {
     ticker: params.ticker,
     client_order_id: params.clientOrderId,
-    action: "buy",
-    side: params.side,
-    type: "market",
-    count: params.count,
-    buy_max_cost: params.buyMaxCostCents,
-  });
-}
+    side: isYes ? "bid" : "ask",
+    count: params.count.toFixed(2),
+    price: yesPrice.toFixed(4),
+    time_in_force: "immediate_or_cancel",
+    self_trade_prevention_type: "taker_at_cross",
+  };
 
-export async function getOrder(orderId: string): Promise<KalshiOrderResponse> {
-  return tradeRequest<KalshiOrderResponse>("GET", `/portfolio/orders/${encodeURIComponent(orderId)}`);
+  const res = await tradeRequest<CreateOrderV2Response>(
+    "POST",
+    "/portfolio/events/orders",
+    body,
+  );
+
+  const fillCount = Math.round(parseFloat(res.fill_count || "0"));
+  const remainingCount = Math.round(parseFloat(res.remaining_count || "0"));
+  const avgYesFill = res.average_fill_price ? parseFloat(res.average_fill_price) : null;
+  // Convert the YES-book fill price back to the side the user bought
+  const avgSideFill =
+    avgYesFill !== null ? (isYes ? avgYesFill : 1 - avgYesFill) : null;
+
+  return {
+    orderId: res.order_id,
+    clientOrderId: res.client_order_id,
+    fillCount,
+    remainingCount,
+    avgFillPriceCents: avgSideFill !== null ? Math.round(avgSideFill * 100) : null,
+    avgFeeCents: res.average_fee_paid
+      ? Math.round(parseFloat(res.average_fee_paid) * 100)
+      : null,
+    status: fillCount === 0 ? "canceled" : remainingCount > 0 ? "partial" : "executed",
+    raw: res,
+  };
 }

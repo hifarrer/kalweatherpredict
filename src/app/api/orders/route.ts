@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
   }
 
   const clientOrderId = randomUUID();
-  const buyMaxCostCents = count! * (askCents! + MAX_COST_BUFFER_CENTS);
+  const maxPriceCents = askCents! + MAX_COST_BUFFER_CENTS;
 
   // Audit row first (idempotency anchor), then the Kalshi call.
   const [orderRow] = await db
@@ -92,44 +92,43 @@ export async function POST(req: NextRequest) {
       eventTicker,
       side,
       action: "buy",
-      type: "market",
+      type: "market", // emulated: immediate-or-cancel at ask + buffer
       count: count!,
-      maxCostCents: buyMaxCostCents,
+      maxCostCents: count! * maxPriceCents,
       status: "pending",
     })
     .returning({ id: orders.id });
 
   try {
-    const result = await createOrder({
+    const placed = await createOrder({
       ticker,
       clientOrderId,
       side,
       count: count!,
-      buyMaxCostCents,
+      maxPriceCents,
     });
 
-    const o = result.order;
-    const fillCount = Number(o.taker_fill_count ?? 0);
-    const fillCost = Number(o.taker_fill_cost ?? 0);
-    const avgFill = fillCount > 0 ? Math.round(fillCost / fillCount) : null;
+    const fillCost =
+      placed.avgFillPriceCents !== null ? placed.fillCount * placed.avgFillPriceCents : null;
 
     await db
       .update(orders)
       .set({
-        status: o.status || "executed",
-        kalshiOrderId: o.order_id,
-        avgFillPriceCents: avgFill,
-        response: result as unknown as Record<string, unknown>,
+        status: placed.status,
+        kalshiOrderId: placed.orderId,
+        avgFillPriceCents: placed.avgFillPriceCents,
+        response: placed.raw as Record<string, unknown>,
       })
       .where(eq(orders.id, orderRow.id));
 
     return NextResponse.json({
       ok: true,
-      orderId: o.order_id,
-      status: o.status,
-      fillCount,
+      orderId: placed.orderId,
+      status: placed.status,
+      fillCount: placed.fillCount,
       fillCostCents: fillCost,
-      avgFillPriceCents: avgFill,
+      avgFillPriceCents: placed.avgFillPriceCents,
+      avgFeeCents: placed.avgFeeCents,
     });
   } catch (err) {
     const message =

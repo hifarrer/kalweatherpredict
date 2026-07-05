@@ -4,6 +4,29 @@ import { useEffect, useState } from "react";
 import { KalshiMarket } from "@/types";
 import { BuySide } from "./MarketsTable";
 
+/**
+ * Snapshot of the AI suggestion a buy was initiated from, forwarded to
+ * /api/orders so the order can later be graded against what the AI claimed.
+ */
+export interface TradeSuggestion {
+  side: BuySide;
+  kind: "consensus" | "value";
+  price: number;
+  forecastProb: number;
+  blendedProb: number;
+  winProb: number;
+  marketProb: number | null;
+  feePerContract: number;
+  evPerContract: number;
+  score: number;
+  volume24h: number;
+  metric: string | null;
+  targetDate: string | null;
+  leadDays: number | null;
+  aiVerdict: string | null;
+  aiConfidence: number | null;
+}
+
 interface TradeModalProps {
   market: KalshiMarket;
   side: BuySide;
@@ -11,6 +34,8 @@ interface TradeModalProps {
   eventTitle: string;
   isOpen: boolean;
   onClose: () => void;
+  /** Present when the buy was initiated from a suggestion card. */
+  suggestion?: TradeSuggestion | null;
 }
 
 type Step = "form" | "confirm" | "result";
@@ -38,6 +63,7 @@ export default function TradeModal({
   eventTitle,
   isOpen,
   onClose,
+  suggestion,
 }: TradeModalProps) {
   const [step, setStep] = useState<Step>("form");
   const [count, setCount] = useState(1);
@@ -85,6 +111,7 @@ export default function TradeModal({
           side,
           count,
           askCents,
+          ...(suggestion ? { suggestion } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));

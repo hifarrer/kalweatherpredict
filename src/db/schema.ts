@@ -4,6 +4,7 @@ import {
   jsonb,
   timestamp,
   bigserial,
+  bigint,
   integer,
   real,
   boolean,
@@ -69,8 +70,12 @@ export const orders = pgTable(
     count: integer("count").notNull(),
     maxCostCents: integer("max_cost_cents"),
     avgFillPriceCents: integer("avg_fill_price_cents"),
+    fillCount: integer("fill_count"), // contracts actually filled (IOC may fill < count)
+    avgFeeCents: integer("avg_fee_cents"), // Kalshi taker fee per contract, cents
     status: text("status").notNull().default("pending"), // pending | executed | canceled | failed
     kalshiOrderId: text("kalshi_order_id"),
+    /** Snapshot of the AI suggestion this order was placed from, if any. */
+    suggestionId: bigint("suggestion_id", { mode: "number" }),
     response: jsonb("response"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -113,6 +118,56 @@ export const predictionSnapshots = pgTable(
   (t) => [
     index("snap_market_captured_idx").on(t.marketTicker, t.capturedAt),
     index("snap_target_date_idx").on(t.targetDate),
+  ],
+);
+
+/**
+ * Point-in-time snapshots of AI trade suggestions, for accuracy tracking.
+ *
+ * Rows come from two sources: the hourly tracking pass persists every
+ * suggestion the scorer produces ("scheduled"), and order placement persists
+ * the exact suggestion the user acted on ("order", referenced by
+ * orders.suggestion_id). Once the market settles, a background job fills the
+ * grading columns in place — graded rows are the ML training dataset and are
+ * never pruned.
+ */
+export const suggestions = pgTable(
+  "suggestions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    eventTicker: text("event_ticker").notNull(),
+    marketTicker: text("market_ticker").notNull(),
+    side: text("side").notNull(), // "yes" | "no"
+    kind: text("kind").notNull(), // "consensus" | "value"
+    source: text("source").notNull(), // "scheduled" | "order"
+    // Features mirroring SuggestedAction at the time of the snapshot
+    price: real("price").notNull(),
+    forecastProb: real("forecast_prob").notNull(),
+    blendedProb: real("blended_prob").notNull(),
+    winProb: real("win_prob").notNull(),
+    marketProb: real("market_prob"),
+    feePerContract: real("fee_per_contract").notNull(),
+    evPerContract: real("ev_per_contract").notNull(),
+    score: real("score").notNull(),
+    volume24h: real("volume_24h"),
+    // Event context
+    cityCode: text("city_code"),
+    metric: text("metric"),
+    targetDate: text("target_date"),
+    leadDays: integer("lead_days"),
+    aiVerdict: text("ai_verdict"), // keep | downgrade | veto
+    aiConfidence: real("ai_confidence"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    // Grading — filled by gradeSuggestions() once the market settles
+    result: text("result"), // settlement result "yes" | "no"
+    suggestedSideWon: boolean("suggested_side_won"),
+    realizedEv: real("realized_ev"), // (won ? 1 : 0) − price − feePerContract
+    gradedAt: timestamp("graded_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("suggestions_market_idx").on(t.marketTicker),
+    index("suggestions_graded_idx").on(t.gradedAt),
+    index("suggestions_created_idx").on(t.createdAt),
   ],
 );
 

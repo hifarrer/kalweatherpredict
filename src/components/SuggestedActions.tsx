@@ -5,10 +5,11 @@ import { EnrichedEvent, KalshiMarket } from "@/types";
 import { computeSuggestedActions } from "@/lib/suggest";
 import { formatStrike } from "@/lib/format";
 import { BuySide } from "./MarketsTable";
+import { TradeSuggestion } from "./TradeModal";
 
 interface SuggestedActionsProps {
   enriched: EnrichedEvent;
-  onBuy: (market: KalshiMarket, side: BuySide) => void;
+  onBuy: (market: KalshiMarket, side: BuySide, suggestion?: TradeSuggestion) => void;
 }
 
 interface ReviewVerdictRow {
@@ -169,7 +170,26 @@ export default function SuggestedActions({ enriched, onBuy }: SuggestedActionsPr
                   </span>
                   {market && (
                     <button
-                      onClick={() => onBuy(market, s.side)}
+                      onClick={() =>
+                        onBuy(market, s.side, {
+                          side: s.side,
+                          kind: s.kind,
+                          price: s.price,
+                          forecastProb: s.forecastProb,
+                          blendedProb: s.blendedProb,
+                          winProb: s.winProb,
+                          marketProb: s.marketProb,
+                          feePerContract: s.feePerContract,
+                          evPerContract: s.evPerContract,
+                          score: s.score,
+                          volume24h: s.volume24h,
+                          metric: enriched.prediction?.metric ?? null,
+                          targetDate: enriched.prediction?.targetDate ?? null,
+                          leadDays: enriched.prediction?.leadDays ?? null,
+                          aiVerdict: verdict?.verdict ?? null,
+                          aiConfidence: verdict?.confidence ?? null,
+                        })
+                      }
                       className={`px-3 py-1.5 rounded-lg text-[11px] font-bold text-white transition-colors ${
                         s.side === "yes"
                           ? "bg-kalshi-green hover:bg-green-500"

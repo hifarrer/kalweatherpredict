@@ -9,7 +9,7 @@ import ForecastPanel from "./ForecastPanel";
 import MarketsTable, { BuySide } from "./MarketsTable";
 import AiAnalysisModal from "./AiAnalysisModal";
 import SuggestedActions from "./SuggestedActions";
-import TradeModal from "./TradeModal";
+import TradeModal, { TradeSuggestion } from "./TradeModal";
 
 interface EventDetailModalProps {
   enriched: EnrichedEvent;
@@ -37,7 +37,11 @@ export default function EventDetailModal({
   const [aiOpen, setAiOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [trade, setTrade] = useState<{ market: KalshiMarket; side: BuySide } | null>(null);
+  const [trade, setTrade] = useState<{
+    market: KalshiMarket;
+    side: BuySide;
+    suggestion?: TradeSuggestion;
+  } | null>(null);
 
   const { event, cityCode, prediction, volume24h, earliestClose, opportunityScore } = enriched;
   const city = cityCode ? CITY_MAP[cityCode] : null;
@@ -198,7 +202,7 @@ export default function EventDetailModal({
             {suggestedActions ?? (
               <SuggestedActions
                 enriched={enriched}
-                onBuy={(market, side) => setTrade({ market, side })}
+                onBuy={(market, side, suggestion) => setTrade({ market, side, suggestion })}
               />
             )}
 
@@ -241,6 +245,7 @@ export default function EventDetailModal({
           eventTitle={event.title}
           isOpen
           onClose={() => setTrade(null)}
+          suggestion={trade.suggestion ?? null}
         />
       )}
     </>

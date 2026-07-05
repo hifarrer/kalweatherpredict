@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { events, orders } from "@/db/schema";
+import { events, orders, suggestions } from "@/db/schema";
 import {
   createOrder,
   isTradingConfigured,
   KalshiTradeError,
 } from "@/lib/kalshiTrade";
+import { SESSION_COOKIE, verifySessionToken } from "@/lib/session";
 import { KalshiEvent } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,55 @@ const MAX_COST_BUFFER_CENTS = 5; // per contract, on top of the quoted ask
 function maxOrderContracts(): number {
   const v = parseInt(process.env.MAX_ORDER_CONTRACTS || "100", 10);
   return Number.isFinite(v) && v > 0 ? v : 100;
+}
+
+/**
+ * Snapshot of the AI suggestion the user acted on, sent by the trade modal.
+ * Client-supplied and audit-only: numbers are stored for later grading, never
+ * used to price or validate the order itself.
+ */
+interface OrderSuggestionPayload {
+  side?: string;
+  kind?: string;
+  price?: number;
+  forecastProb?: number;
+  blendedProb?: number;
+  winProb?: number;
+  marketProb?: number | null;
+  feePerContract?: number;
+  evPerContract?: number;
+  score?: number;
+  volume24h?: number;
+  metric?: string | null;
+  targetDate?: string | null;
+  leadDays?: number | null;
+  aiVerdict?: string | null;
+  aiConfidence?: number | null;
+}
+
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+/** Shape-check the suggestion payload; returns null if anything vital is off. */
+function validSuggestion(
+  s: OrderSuggestionPayload | undefined,
+  orderSide: string,
+): OrderSuggestionPayload | null {
+  if (!s || typeof s !== "object") return null;
+  if (s.side !== orderSide) return null; // stale/mismatched card — don't link
+  if (s.kind !== "consensus" && s.kind !== "value") return null;
+  const required = [
+    s.price,
+    s.forecastProb,
+    s.blendedProb,
+    s.winProb,
+    s.feePerContract,
+    s.evPerContract,
+    s.score,
+  ];
+  if (!required.every(isFiniteNumber)) return null;
+  return s;
 }
 
 /**
@@ -39,6 +89,7 @@ export async function POST(req: NextRequest) {
     side?: string;
     count?: number;
     askCents?: number;
+    suggestion?: OrderSuggestionPayload;
   };
   try {
     body = await req.json();
@@ -68,7 +119,7 @@ export async function POST(req: NextRequest) {
   // Validate the market exists in our cached open events (defense against
   // arbitrary-ticker orders from a compromised/buggy client).
   const rows = await db
-    .select({ data: events.data })
+    .select({ data: events.data, cityCode: events.cityCode })
     .from(events)
     .where(eq(events.eventTicker, eventTicker));
   const event = rows[0]?.data as unknown as KalshiEvent | undefined;
@@ -80,6 +131,48 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const session = req.cookies.get(SESSION_COOKIE)?.value;
+  const payload = session ? await verifySessionToken(session) : null;
+  const userId = payload ? parseInt(payload.sub, 10) : NaN;
+
+  // Snapshot the suggestion the user acted on, so the order can later be
+  // graded against what the AI claimed at buy time. Best-effort: a failure
+  // here must never block the real order.
+  let suggestionId: number | null = null;
+  const sugg = validSuggestion(body.suggestion, side);
+  if (sugg) {
+    try {
+      const [row] = await db
+        .insert(suggestions)
+        .values({
+          eventTicker,
+          marketTicker: ticker,
+          side,
+          kind: sugg.kind!,
+          source: "order",
+          price: sugg.price!,
+          forecastProb: sugg.forecastProb!,
+          blendedProb: sugg.blendedProb!,
+          winProb: sugg.winProb!,
+          marketProb: isFiniteNumber(sugg.marketProb) ? sugg.marketProb : null,
+          feePerContract: sugg.feePerContract!,
+          evPerContract: sugg.evPerContract!,
+          score: sugg.score!,
+          volume24h: isFiniteNumber(sugg.volume24h) ? sugg.volume24h : null,
+          cityCode: rows[0]?.cityCode ?? null,
+          metric: typeof sugg.metric === "string" ? sugg.metric : null,
+          targetDate: typeof sugg.targetDate === "string" ? sugg.targetDate : null,
+          leadDays: isFiniteNumber(sugg.leadDays) ? sugg.leadDays : null,
+          aiVerdict: typeof sugg.aiVerdict === "string" ? sugg.aiVerdict : null,
+          aiConfidence: isFiniteNumber(sugg.aiConfidence) ? sugg.aiConfidence : null,
+        })
+        .returning({ id: suggestions.id });
+      suggestionId = row?.id ?? null;
+    } catch (err) {
+      console.error("Failed to snapshot order suggestion:", err);
+    }
+  }
+
   const clientOrderId = randomUUID();
   const maxPriceCents = askCents! + MAX_COST_BUFFER_CENTS;
 
@@ -88,6 +181,7 @@ export async function POST(req: NextRequest) {
     .insert(orders)
     .values({
       clientOrderId,
+      userId: Number.isFinite(userId) ? userId : null,
       ticker,
       eventTicker,
       side,
@@ -96,6 +190,7 @@ export async function POST(req: NextRequest) {
       count: count!,
       maxCostCents: count! * maxPriceCents,
       status: "pending",
+      suggestionId,
     })
     .returning({ id: orders.id });
 
@@ -117,6 +212,8 @@ export async function POST(req: NextRequest) {
         status: placed.status,
         kalshiOrderId: placed.orderId,
         avgFillPriceCents: placed.avgFillPriceCents,
+        fillCount: placed.fillCount,
+        avgFeeCents: placed.avgFeeCents,
         response: placed.raw as Record<string, unknown>,
       })
       .where(eq(orders.id, orderRow.id));

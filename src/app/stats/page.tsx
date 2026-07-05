@@ -47,23 +47,39 @@ export default function StatsPage() {
   const [data, setData] = useState<StatsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cityFilter, setCityFilter] = useState("");
 
+  // Refetches on city change; keeps the previous data rendered while the
+  // filtered "recently graded" list loads (spinner only on first load).
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/stats", { cache: "no-store" });
+        const url = cityFilter
+          ? `/api/stats?city=${encodeURIComponent(cityFilter)}`
+          : "/api/stats";
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || `Failed to load stats (${res.status})`);
         }
-        setData(await res.json());
+        const json = await res.json();
+        if (!cancelled) {
+          setData(json);
+          setError(null);
+        }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load stats");
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load stats");
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [cityFilter]);
 
   return (
     <div className="min-h-screen">
@@ -215,10 +231,29 @@ export default function StatsPage() {
 
             {/* Recent resolved predictions */}
             <div>
-              <h2 className="text-sm font-bold text-kalshi-text mb-2">
-                Recently graded ({data.recent.length})
-              </h2>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-sm font-bold text-kalshi-text">
+                  Recently graded ({data.recent.length})
+                </h2>
+                <select
+                  value={cityFilter}
+                  onChange={(e) => setCityFilter(e.target.value)}
+                  className="bg-black/30 border border-kalshi-border rounded-lg px-2 py-1 text-xs text-kalshi-text focus:outline-none focus:border-kalshi-orange transition-colors"
+                >
+                  <option value="">All cities</option>
+                  {data.byCity.map((g) => (
+                    <option key={g.key} value={g.key}>
+                      {CITY_MAP[g.key]?.label ?? g.key}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="bg-kalshi-surface border border-kalshi-border rounded-xl overflow-x-auto">
+                {data.recent.length === 0 ? (
+                  <p className="p-4 text-xs text-kalshi-muted">
+                    No graded markets for this city yet.
+                  </p>
+                ) : (
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-kalshi-muted text-left border-b border-kalshi-border">
@@ -269,6 +304,7 @@ export default function StatsPage() {
                     })}
                   </tbody>
                 </table>
+                )}
               </div>
             </div>
           </>

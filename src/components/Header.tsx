@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/advantage", label: "AI Advantage" },
   { href: "/stats", label: "Stats" },
+  { href: "/history", label: "History" },
 ];
 
 export default function Header({ onRefresh, loading = false }: HeaderProps) {

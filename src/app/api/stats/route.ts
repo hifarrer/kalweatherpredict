@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { leadBucket } from "@/lib/calibration";
 import { getSigmaCalibration } from "@/lib/calibrationStore";
+import { CITY_MAP } from "@/lib/cities";
 
 export const dynamic = "force-dynamic";
 
@@ -70,8 +71,12 @@ function groupBy(rows: GradedRow[], keyFn: (r: GradedRow) => string | null): Sta
     .sort((a, b) => b.count - a.count);
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    // Optional city filter — applies to the "recently graded" list only;
+    // aggregates stay global so the breakdown cards don't shift.
+    const cityParam = req.nextUrl.searchParams.get("city");
+    const city = cityParam && CITY_MAP[cityParam] ? cityParam : null;
     // For each settled market: its final snapshot if one exists, otherwise
     // the last snapshot captured while the market was still open.
     const result = await db.execute(sql`
@@ -116,7 +121,7 @@ export async function GET() {
         r.lead_days !== null ? leadBucket(Number(r.lead_days)) : null,
       ),
       calibration,
-      recent: rows.slice(0, 50).map((r) => ({
+      recent: (city ? rows.filter((r) => r.city_code === city) : rows).slice(0, 50).map((r) => ({
         marketTicker: r.market_ticker,
         title: r.title,
         cityCode: r.city_code,

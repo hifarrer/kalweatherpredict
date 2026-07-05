@@ -1,10 +1,11 @@
-import { and, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db/client";
-import { events, predictionSnapshots, settlements } from "@/db/schema";
+import { events, predictionSnapshots, settlements, suggestions } from "@/db/schema";
 import { KalshiEvent } from "@/types";
 import { getEvent } from "@/lib/kalshi";
 import { getOpenEventsFromDb } from "@/lib/sync";
 import { buildEnrichedEvents } from "@/lib/enrich";
+import { computeSuggestedActions } from "@/lib/suggest";
 import { detectMetric, parseDateFromTitle, utcToLocalDateString } from "@/lib/predictor";
 import { CITY_MAP } from "@/lib/cities";
 
@@ -12,6 +13,10 @@ import { CITY_MAP } from "@/lib/cities";
 const FINAL_SNAPSHOT_WINDOW_MS = 70 * 60 * 1000;
 /** Snapshots older than this are pruned. */
 const SNAPSHOT_RETENTION_DAYS = 90;
+/** Ungraded suggestion snapshots older than this are pruned (never settled). */
+const UNGRADED_SUGGESTION_RETENTION_DAYS = 30;
+/** Suggestions persisted per event on the hourly pass. */
+const SUGGESTIONS_PER_EVENT = 10;
 /** How far back to look for expired events that still need settlements. */
 const SETTLEMENT_LOOKBACK_DAYS = 7;
 /** Kalshi API fetches per settlement pass (self-limiting). */
@@ -35,13 +40,42 @@ export async function snapshotPredictions(opts?: { finalOnly?: boolean }): Promi
   const now = Date.now();
 
   type SnapshotRow = typeof predictionSnapshots.$inferInsert;
+  type SuggestionRow = typeof suggestions.$inferInsert;
   const toInsert: SnapshotRow[] = [];
+  const suggestionRows: SuggestionRow[] = [];
   const finalCandidates: string[] = [];
 
   for (const e of enriched) {
     const prediction = e.prediction;
     if (!prediction?.marketLikelihoods || !e.event.markets) continue;
     if (e.volume <= 0 && e.volume24h <= 0) continue;
+
+    // On the broad hourly pass, also persist what the suggestion scorer would
+    // show right now — the raw material for grading AI-pick accuracy later.
+    if (!opts?.finalOnly) {
+      for (const s of computeSuggestedActions(e, SUGGESTIONS_PER_EVENT)) {
+        suggestionRows.push({
+          eventTicker: e.event.event_ticker,
+          marketTicker: s.ticker,
+          side: s.side,
+          kind: s.kind,
+          source: "scheduled",
+          price: s.price,
+          forecastProb: s.forecastProb,
+          blendedProb: s.blendedProb,
+          winProb: s.winProb,
+          marketProb: s.marketProb,
+          feePerContract: s.feePerContract,
+          evPerContract: s.evPerContract,
+          score: s.score,
+          volume24h: s.volume24h,
+          cityCode: e.cityCode,
+          metric: prediction.metric,
+          targetDate: prediction.targetDate ?? null,
+          leadDays: prediction.leadDays ?? null,
+        });
+      }
+    }
 
     const marketByTicker = new Map(e.event.markets.map((m) => [m.ticker, m]));
 
@@ -104,11 +138,17 @@ export async function snapshotPredictions(opts?: { finalOnly?: boolean }): Promi
   for (let i = 0; i < toInsert.length; i += CHUNK) {
     await db.insert(predictionSnapshots).values(toInsert.slice(i, i + CHUNK));
   }
+  for (let i = 0; i < suggestionRows.length; i += CHUNK) {
+    await db.insert(suggestions).values(suggestionRows.slice(i, i + CHUNK));
+  }
 
   if (toInsert.length > 0) {
     console.log(
       `[history] recorded ${toInsert.length} prediction snapshots${opts?.finalOnly ? " (final)" : ""}`,
     );
+  }
+  if (suggestionRows.length > 0) {
+    console.log(`[history] recorded ${suggestionRows.length} suggestion snapshots`);
   }
   return toInsert.length;
 }
@@ -202,7 +242,33 @@ export async function fetchSettlements(): Promise<number> {
 }
 
 /**
- * Delete snapshots past the retention window.
+ * Grade ungraded suggestion snapshots against settled markets: did the
+ * suggested side win, and what was the realized EV per contract at the
+ * snapshot's ask. Set-based and idempotent — a cheap no-op when nothing new
+ * has settled, so it runs every scheduler tick after fetchSettlements().
+ */
+export async function gradeSuggestions(): Promise<number> {
+  const result = await db.execute(sql`
+    UPDATE suggestions s
+    SET result = st.result,
+        suggested_side_won = (s.side = st.result),
+        realized_ev = (CASE WHEN s.side = st.result THEN 1.0 ELSE 0.0 END)
+          - s.price - s.fee_per_contract,
+        graded_at = now()
+    FROM settlements st
+    WHERE st.market_ticker = s.market_ticker AND s.graded_at IS NULL
+  `);
+  const graded = result.rowCount ?? 0;
+  if (graded > 0) {
+    console.log(`[history] graded ${graded} suggestion snapshots`);
+  }
+  return graded;
+}
+
+/**
+ * Delete snapshots past the retention window. Graded suggestion snapshots are
+ * kept forever — they're the training dataset — but ungraded ones whose
+ * markets never got a settlement are useless and get dropped after 30 days.
  */
 export async function pruneOldSnapshots(): Promise<number> {
   const cutoff = new Date(Date.now() - SNAPSHOT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
@@ -213,5 +279,27 @@ export async function pruneOldSnapshots(): Promise<number> {
   if (result.length > 0) {
     console.log(`[history] pruned ${result.length} old snapshots`);
   }
+
+  const suggestionCutoff = new Date(
+    Date.now() - UNGRADED_SUGGESTION_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  );
+  // Only scheduled rows: "order" rows are referenced by orders.suggestion_id
+  // and stay as the record of what the user acted on, graded or not.
+  const prunedSuggestions = await db
+    .delete(suggestions)
+    .where(
+      and(
+        isNull(suggestions.gradedAt),
+        eq(suggestions.source, "scheduled"),
+        lt(suggestions.createdAt, suggestionCutoff),
+      ),
+    )
+    .returning({ id: suggestions.id });
+  if (prunedSuggestions.length > 0) {
+    console.log(
+      `[history] pruned ${prunedSuggestions.length} ungraded suggestion snapshots`,
+    );
+  }
+
   return result.length;
 }

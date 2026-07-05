@@ -263,9 +263,8 @@ async function setMetaTs(key: string): Promise<void> {
  * acyclic (history.ts imports from this file).
  */
 export async function runTrackingJobs(): Promise<void> {
-  const { snapshotPredictions, fetchSettlements, pruneOldSnapshots } = await import(
-    "@/lib/history"
-  );
+  const { snapshotPredictions, fetchSettlements, gradeSuggestions, pruneOldSnapshots } =
+    await import("@/lib/history");
   const now = Date.now();
 
   if (now - (await getMetaTs("last_snapshot_at")) > SNAPSHOT_INTERVAL_MS) {
@@ -276,6 +275,7 @@ export async function runTrackingJobs(): Promise<void> {
   }
 
   await fetchSettlements();
+  await gradeSuggestions();
 
   if (now - (await getMetaTs("last_prune_at")) > PRUNE_INTERVAL_MS) {
     await pruneOldSnapshots();

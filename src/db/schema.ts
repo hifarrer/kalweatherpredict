@@ -73,6 +73,8 @@ export const orders = pgTable(
     fillCount: integer("fill_count"), // contracts actually filled (IOC may fill < count)
     avgFeeCents: integer("avg_fee_cents"), // Kalshi taker fee per contract, cents
     status: text("status").notNull().default("pending"), // pending | executed | canceled | failed
+    /** Who placed the order: "manual" (UI) or "auto" (automation engine). */
+    source: text("source").notNull().default("manual"),
     kalshiOrderId: text("kalshi_order_id"),
     /** Snapshot of the AI suggestion this order was placed from, if any. */
     suggestionId: bigint("suggestion_id", { mode: "number" }),
@@ -169,6 +171,89 @@ export const suggestions = pgTable(
     index("suggestions_graded_idx").on(t.gradedAt),
     index("suggestions_created_idx").on(t.createdAt),
   ],
+);
+
+/**
+ * Positions the automation engine has opened — the bot's own book.
+ *
+ * One row per automated buy that filled; the sell pass and settlement
+ * reconciliation update it in place until it is closed. Budget accounting
+ * derives "deployed" capital from rows with status open/closing.
+ */
+export const automationPositions = pgTable(
+  "automation_positions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    ticker: text("ticker").notNull(),
+    eventTicker: text("event_ticker").notNull(),
+    side: text("side").notNull(), // "yes" | "no" — the side HELD
+    count: integer("count").notNull(), // contracts currently held
+    avgCostCents: integer("avg_cost_cents").notNull(), // per contract, ex-fee
+    buyFeeCents: integer("buy_fee_cents"), // per contract
+    openOrderId: bigint("open_order_id", { mode: "number" }), // orders.id of the buy
+    suggestionId: bigint("suggestion_id", { mode: "number" }),
+    status: text("status").notNull().default("open"), // open | closing | closed
+    cityCode: text("city_code"),
+    metric: text("metric"),
+    targetDate: text("target_date"),
+    // Exit — filled when the position closes
+    exitReason: text("exit_reason"), // take_profit | stop_loss | settled | manual
+    sellOrderId: bigint("sell_order_id", { mode: "number" }), // orders.id of the sell
+    saleProceedsCents: integer("sale_proceeds_cents"), // total, ex-fee
+    sellFeeCents: integer("sell_fee_cents"), // total sell-side fees
+    realizedPnlCents: integer("realized_pnl_cents"), // net of all fees
+    openedAt: timestamp("opened_at", { withTimezone: true }).defaultNow().notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("auto_pos_status_idx").on(t.status),
+    index("auto_pos_ticker_idx").on(t.ticker),
+  ],
+);
+
+/**
+ * One row per automation run (external cron hit or manual "Run now").
+ */
+export const automationRuns = pgTable(
+  "automation_runs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    trigger: text("trigger").notNull().default("cron"), // cron | manual
+    status: text("status").notNull().default("running"), // running | ok | error | skipped
+    balanceCents: integer("balance_cents"),
+    deployedCents: integer("deployed_cents"),
+    candidates: integer("candidates"),
+    buys: integer("buys"),
+    sells: integer("sells"),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("auto_runs_started_idx").on(t.startedAt)],
+);
+
+/**
+ * Every decision an automation run makes — buys, sells, and skips with a
+ * human-readable reason — so the activity log can show WHY the bot acted.
+ */
+export const automationActions = pgTable(
+  "automation_actions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    runId: bigint("run_id", { mode: "number" }).notNull(),
+    kind: text("kind").notNull(), // buy | sell | close_settled | skip | error | info
+    ticker: text("ticker"),
+    eventTicker: text("event_ticker"),
+    side: text("side"),
+    count: integer("count"),
+    priceCents: integer("price_cents"),
+    reason: text("reason").notNull(),
+    orderId: bigint("order_id", { mode: "number" }),
+    positionId: bigint("position_id", { mode: "number" }),
+    data: jsonb("data"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("auto_actions_run_idx").on(t.runId)],
 );
 
 /**

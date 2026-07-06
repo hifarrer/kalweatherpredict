@@ -6,6 +6,7 @@ import { events, orders, suggestions } from "@/db/schema";
 import {
   createOrder,
   isTradingConfigured,
+  maxOrderContracts,
   KalshiTradeError,
 } from "@/lib/kalshiTrade";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/session";
@@ -14,11 +15,6 @@ import { KalshiEvent } from "@/types";
 export const dynamic = "force-dynamic";
 
 const MAX_COST_BUFFER_CENTS = 5; // per contract, on top of the quoted ask
-
-function maxOrderContracts(): number {
-  const v = parseInt(process.env.MAX_ORDER_CONTRACTS || "100", 10);
-  return Number.isFinite(v) && v > 0 ? v : 100;
-}
 
 /**
  * Snapshot of the AI suggestion the user acted on, sent by the trade modal.

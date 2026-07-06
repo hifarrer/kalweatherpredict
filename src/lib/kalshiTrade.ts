@@ -211,6 +211,78 @@ export async function getBalance(): Promise<KalshiBalance> {
   return tradeRequest<KalshiBalance>("GET", "/portfolio/balance");
 }
 
+/** Safety cap on contracts per order (shared by manual and automated paths). */
+export function maxOrderContracts(): number {
+  const v = parseInt(process.env.MAX_ORDER_CONTRACTS || "100", 10);
+  return Number.isFinite(v) && v > 0 ? v : 100;
+}
+
+/**
+ * A market position from GET /portfolio/positions, normalized.
+ * `position` is signed: positive = YES contracts held, negative = NO.
+ */
+export interface KalshiPosition {
+  ticker: string;
+  position: number;
+  marketExposureCents: number | null;
+  realizedPnlCents: number | null;
+  raw: unknown;
+}
+
+/** Numeric fields may arrive as integer cents or fixed-point strings. */
+function toNumber(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+interface PositionsResponse {
+  market_positions?: Array<Record<string, unknown>>;
+  cursor?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * All nonzero market positions on the account (cursor-paginated).
+ * Used by the automation engine to reconcile its book against Kalshi's and
+ * to avoid touching manually held tickers.
+ */
+export async function getPositions(): Promise<KalshiPosition[]> {
+  const positions: KalshiPosition[] = [];
+  let cursor: string | undefined;
+
+  for (let page = 0; page < 20; page++) {
+    const qs = new URLSearchParams({ limit: "200" });
+    if (cursor) qs.set("cursor", cursor);
+    const res = await tradeRequest<PositionsResponse>(
+      "GET",
+      `/portfolio/positions?${qs.toString()}`,
+    );
+
+    for (const p of res.market_positions ?? []) {
+      const ticker = typeof p.ticker === "string" ? p.ticker : null;
+      // position may be `position` (classic int) or `position_fp` (fixed-point)
+      const pos = toNumber(p.position) ?? toNumber(p.position_fp);
+      if (!ticker || pos === null) continue;
+      positions.push({
+        ticker,
+        position: Math.round(pos),
+        marketExposureCents: toNumber(p.market_exposure),
+        realizedPnlCents: toNumber(p.realized_pnl),
+        raw: p,
+      });
+    }
+
+    cursor = typeof res.cursor === "string" && res.cursor ? res.cursor : undefined;
+    if (!cursor) break;
+  }
+
+  return positions.filter((p) => p.position !== 0);
+}
+
 export interface CreateOrderParams {
   ticker: string;
   clientOrderId: string;
@@ -289,6 +361,69 @@ export async function createOrder(params: CreateOrderParams): Promise<PlacedOrde
     fillCount,
     remainingCount,
     avgFillPriceCents: avgSideFill !== null ? Math.round(avgSideFill * 100) : null,
+    avgFeeCents: res.average_fee_paid
+      ? Math.round(parseFloat(res.average_fee_paid) * 100)
+      : null,
+    status: fillCount === 0 ? "canceled" : remainingCount > 0 ? "partial" : "executed",
+    raw: res,
+  };
+}
+
+export interface SellOrderParams {
+  ticker: string;
+  clientOrderId: string;
+  /** The side currently HELD (what is being sold). */
+  side: "yes" | "no";
+  count: number;
+  /** Worst acceptable sale proceeds per contract, in cents. */
+  minProceedsCents: number;
+}
+
+/**
+ * Close (part of) a held position with an aggressive IOC order.
+ *
+ * On the single YES-side book, selling held YES is an `ask` and selling held
+ * NO is a `bid` (which nets against the NO position). The IOC limit price
+ * guarantees proceeds per contract never drop below minProceedsCents; the
+ * unfilled remainder cancels. avgFillPriceCents in the result is normalized
+ * to proceeds per contract of the HELD side.
+ */
+export async function sellPosition(params: SellOrderParams): Promise<PlacedOrder> {
+  const minProceeds = Math.min(99, Math.max(1, params.minProceedsCents)) / 100;
+  const isYes = params.side === "yes";
+  // Selling YES: ask at the floor price. Selling NO: bid for YES at the
+  // ceiling price 1 − minProceeds (NO proceeds = 1 − yes price paid).
+  const yesPrice = isYes ? minProceeds : 1 - minProceeds;
+
+  const body = {
+    ticker: params.ticker,
+    client_order_id: params.clientOrderId,
+    side: isYes ? "ask" : "bid",
+    count: params.count.toFixed(2),
+    price: yesPrice.toFixed(4),
+    time_in_force: "immediate_or_cancel",
+    self_trade_prevention_type: "taker_at_cross",
+  };
+
+  const res = await tradeRequest<CreateOrderV2Response>(
+    "POST",
+    "/portfolio/events/orders",
+    body,
+  );
+
+  const fillCount = Math.round(parseFloat(res.fill_count || "0"));
+  const remainingCount = Math.round(parseFloat(res.remaining_count || "0"));
+  const avgYesFill = res.average_fill_price ? parseFloat(res.average_fill_price) : null;
+  // Proceeds per contract for the held side
+  const avgProceeds =
+    avgYesFill !== null ? (isYes ? avgYesFill : 1 - avgYesFill) : null;
+
+  return {
+    orderId: res.order_id,
+    clientOrderId: res.client_order_id,
+    fillCount,
+    remainingCount,
+    avgFillPriceCents: avgProceeds !== null ? Math.round(avgProceeds * 100) : null,
     avgFeeCents: res.average_fee_paid
       ? Math.round(parseFloat(res.average_fee_paid) * 100)
       : null,

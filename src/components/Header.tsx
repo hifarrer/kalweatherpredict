@@ -11,6 +11,7 @@ interface HeaderProps {
 const NAV_LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/advantage", label: "AI Advantage" },
+  { href: "/automation", label: "Automation" },
   { href: "/stats", label: "Stats" },
   { href: "/history", label: "History" },
 ];

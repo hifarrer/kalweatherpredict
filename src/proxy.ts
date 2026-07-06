@@ -15,6 +15,12 @@ export default async function proxy(req: NextRequest) {
 
   const isLoginPage = pathname === "/login";
   const isLoginApi = pathname === "/api/login";
+  // External-cron endpoints authenticate with CRON_SECRET inside the route
+  const isCronApi = pathname.startsWith("/api/cron/");
+
+  if (isCronApi) {
+    return NextResponse.next();
+  }
 
   if (session) {
     // Already logged in: bounce off the login page back to the dashboard

@@ -92,6 +92,32 @@ export function evaluateExit(
   return null;
 }
 
+// Stop-loss suppression: only a strongly confident model may override the
+// market, and never once the book prices the held side as near-dead. The old
+// >=50% bar let the model ride 12 losers to settlement (−$7.25 in settled
+// exits) — when model and market disagreed, the market won almost every time.
+const STOP_SUPPRESS_MIN_MODEL_WIN = 0.75;
+const MARKET_DEAD_BID_CENTS = 15;
+const MARKET_DEAD_DRAWDOWN = 0.5;
+
+/**
+ * May the model veto a triggered stop-loss? True only when the latest model
+ * win prob is high AND the market hasn't collapsed to near-certainty against
+ * the position (bid ≤ 15¢ at ≥50% drawdown ⇒ trust the market and cut).
+ */
+export function maySuppressStopLoss(
+  modelWin: number | null,
+  costCents: number,
+  bidCents: number,
+): boolean {
+  if (modelWin === null || modelWin < STOP_SUPPRESS_MIN_MODEL_WIN) return false;
+  const marketDead =
+    bidCents <= MARKET_DEAD_BID_CENTS &&
+    costCents > 0 &&
+    (costCents - bidCents) / costCents >= MARKET_DEAD_DRAWDOWN;
+  return !marketDead;
+}
+
 /**
  * How many contracts to buy at maxPriceCents (+ fee) without exceeding the
  * per-trade cap, the remaining budget, or the global contract cap.
@@ -344,13 +370,12 @@ async function sellPass(
       const exit = evaluateExit(pos.avgCostCents, bid, settings);
       if (!exit) continue;
 
-      // Stop-loss guard: same-day observation-backed markets often show
-      // absurd stale bids (1¢ on a locked winner). Selling into that dumps
-      // the bot's best positions, so a stop-loss only fires when the model
-      // ALSO no longer favors the held side.
+      // Stop-loss guard: thin books can show stale bids on positions the
+      // model still strongly believes in, so a very confident model may hold
+      // through a drawdown — but only up to a point (maySuppressStopLoss).
       if (exit === "stop_loss") {
         const modelWin = await latestModelWinProb(pos.ticker, pos.side);
-        if (modelWin !== null && modelWin >= 0.5) {
+        if (maySuppressStopLoss(modelWin, pos.avgCostCents, bid)) {
           await logAction(runId, {
             kind: "skip",
             ticker: pos.ticker,
@@ -358,7 +383,7 @@ async function sellPass(
             side: pos.side,
             priceCents: bid,
             positionId: pos.id,
-            reason: `Stop-loss suppressed: bid is ${bid}¢ (cost ${pos.avgCostCents}¢) but the model still gives ${pos.side.toUpperCase()} a ${Math.round(modelWin * 100)}% win — thin/stale book, holding`,
+            reason: `Stop-loss suppressed: bid is ${bid}¢ (cost ${pos.avgCostCents}¢) but the model still gives ${pos.side.toUpperCase()} a ${Math.round((modelWin ?? 0) * 100)}% win — thin/stale book, holding`,
           });
           continue;
         }
@@ -503,6 +528,30 @@ interface BuyCandidate {
   leadDays: number | null;
 }
 
+/** Rebuy cooldown after a stop-loss — ends the stop→rebuy→stop churn loop. */
+const STOP_LOSS_COOLDOWN_HOURS = 6;
+
+/** Realized P&L (cents) across positions closed in the trailing 24 hours. */
+async function trailing24hRealizedPnl(): Promise<number> {
+  const res = await db.execute(sql`
+    SELECT COALESCE(SUM(realized_pnl_cents), 0) AS pnl
+    FROM automation_positions
+    WHERE closed_at > now() - interval '24 hours'
+  `);
+  return Number(res.rows[0]?.pnl ?? 0);
+}
+
+/** Tickers stop-lossed within the cooldown window — do not rebuy yet. */
+async function recentStopLossTickers(): Promise<Set<string>> {
+  const res = await db.execute(sql`
+    SELECT DISTINCT ticker
+    FROM automation_positions
+    WHERE exit_reason = 'stop_loss'
+      AND closed_at > now() - (${STOP_LOSS_COOLDOWN_HOURS} || ' hours')::interval
+  `);
+  return new Set(res.rows.map((r) => String((r as { ticker: string }).ticker)));
+}
+
 function marketClosed(enriched: EnrichedEvent, ticker: string): boolean {
   const m = enriched.event.markets?.find((mm) => mm.ticker === ticker);
   if (!m) return true;
@@ -536,9 +585,36 @@ async function buyPass(
     return { buys: 0, candidates: 0 };
   }
 
+  // Cheapest possible viable trade under the price floor — if the account
+  // can't cover it there is nothing to do (and no reason to burn AI reviews).
+  if (
+    balanceCents !== null &&
+    balanceCents < settings.minPriceCents + 2
+  ) {
+    await logAction(runId, {
+      kind: "info",
+      reason: `Buy pass skipped: balance ${formatCents(balanceCents).replace("+", "")} cannot cover a single contract at the ${settings.minPriceCents}¢ price floor`,
+    });
+    return { buys: 0, candidates: 0 };
+  }
+
+  // Circuit breaker: after a bad 24h stop opening new risk; exits still run.
+  if (settings.maxDailyLossCents > 0) {
+    const pnl24h = await trailing24hRealizedPnl();
+    if (pnl24h <= -settings.maxDailyLossCents) {
+      await logAction(runId, {
+        kind: "info",
+        reason: `Buy pass halted by circuit breaker: realized P&L over the last 24h is ${formatCents(pnl24h)} (limit -${formatCents(settings.maxDailyLossCents).replace("+", "")})`,
+      });
+      return { buys: 0, candidates: 0 };
+    }
+  }
+
   // Tickers the bot must not touch: any open bot position (either side —
-  // buying the opposite side would net-close it) or any manual Kalshi holding.
+  // buying the opposite side would net-close it), any manual Kalshi holding,
+  // or anything stop-lossed within the cooldown window.
   const heldTickers = new Set(open.map((p) => p.ticker));
+  const cooldownTickers = await recentStopLossTickers();
 
   const rows = await getOpenEventsFromDb();
   const enrichedEvents = await buildEnrichedEvents(rows);
@@ -555,9 +631,22 @@ async function buyPass(
       if (s.score < settings.minScore) continue;
       if (s.evPerContract < settings.minEv) continue;
       if (s.winProb < settings.minWinProb) continue;
+      // Cheap-lottery guard: entries under the floor were 6/35 for −$5.27 live
+      if (Math.round(s.price * 100) < settings.minPriceCents) continue;
+      // Disagreement guard: when the model claims far more than the market
+      // will pay, the market has been the one that's right. marketProb is
+      // P(YES) — flip it for NO picks before comparing to the side winProb.
+      if (s.marketProb !== null && s.marketProb !== undefined) {
+        const sideMarketProb = s.side === "yes" ? s.marketProb : 1 - s.marketProb;
+        if (s.winProb - sideMarketProb > settings.maxProbGap) continue;
+      }
+      // Hourly temp series settle on a single hour's reading the daily model
+      // can't price — excluded at the predictor, kept here as backstop
+      if (/^KXTEMP[A-Z]*H-/.test(s.ticker)) continue;
       if (settings.obsBackedOnly && !obsByTicker.get(s.ticker)) continue;
       if (marketClosed(enriched, s.ticker)) continue;
       if (heldTickers.has(s.ticker)) continue;
+      if (cooldownTickers.has(s.ticker)) continue;
       if ((kalshiByTicker.get(s.ticker) ?? 0) !== 0) continue;
       candidates.push({ enriched, suggestion: s, leadDays });
     }
@@ -593,6 +682,32 @@ async function buyPass(
 
     const eventTicker = enriched.event.event_ticker;
     try {
+      // --- Sizing first: never spend an AI review on a trade we can't afford ---
+      const askCents = Math.round(s.price * 100);
+      const maxPriceCents = Math.min(99, askCents + BUY_BUFFER_CENTS);
+      const feeCents = Math.round(kalshiFeePerContract(maxPriceCents / 100) * 100);
+      let n = sizeContracts(
+        maxPriceCents,
+        feeCents,
+        settings.maxPerTradeCents,
+        budgetLeft,
+        contractCap,
+      );
+      if (balanceLeft !== null) {
+        n = Math.min(n, Math.floor(balanceLeft / (maxPriceCents + feeCents)));
+      }
+      if (n < 1) {
+        await logAction(runId, {
+          kind: "skip",
+          ticker: s.ticker,
+          eventTicker,
+          side: s.side,
+          priceCents: askCents,
+          reason: `Cannot afford 1 contract at ${maxPriceCents}¢+${feeCents}¢ fee (budget left ${formatCents(budgetLeft).replace("+", "")}, balance ${balanceLeft !== null ? formatCents(balanceLeft).replace("+", "") : "unknown"})`,
+        });
+        continue;
+      }
+
       // --- AI review gate (fail closed) ---
       if (!isAiConfigured()) {
         await logAction(runId, {
@@ -620,36 +735,10 @@ async function buyPass(
           ticker: s.ticker,
           eventTicker,
           side: s.side,
-          priceCents: Math.round(s.price * 100),
+          priceCents: askCents,
           reason: verdict
             ? `AI review: ${verdict.verdict} (confidence ${Math.round(verdict.confidence * 100)}%) — ${verdict.reason}`
             : "AI review returned no verdict for this pick",
-        });
-        continue;
-      }
-
-      // --- Sizing ---
-      const askCents = Math.round(s.price * 100);
-      const maxPriceCents = Math.min(99, askCents + BUY_BUFFER_CENTS);
-      const feeCents = Math.round(kalshiFeePerContract(maxPriceCents / 100) * 100);
-      let n = sizeContracts(
-        maxPriceCents,
-        feeCents,
-        settings.maxPerTradeCents,
-        budgetLeft,
-        contractCap,
-      );
-      if (balanceLeft !== null) {
-        n = Math.min(n, Math.floor(balanceLeft / (maxPriceCents + feeCents)));
-      }
-      if (n < 1) {
-        await logAction(runId, {
-          kind: "skip",
-          ticker: s.ticker,
-          eventTicker,
-          side: s.side,
-          priceCents: askCents,
-          reason: `Cannot afford 1 contract at ${maxPriceCents}¢+${feeCents}¢ fee (budget left ${formatCents(budgetLeft).replace("+", "")}, balance ${balanceLeft !== null ? formatCents(balanceLeft).replace("+", "") : "unknown"})`,
         });
         continue;
       }

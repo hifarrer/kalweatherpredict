@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateExit, sizeContracts } from "@/lib/autoTrade";
+import { evaluateExit, maySuppressStopLoss, sizeContracts } from "@/lib/autoTrade";
 import {
   DEFAULT_AUTOMATION_SETTINGS,
   sanitizeSettings,
@@ -124,5 +124,46 @@ describe("sanitizeSettings", () => {
     expect(s.takeProfitMode).toBe("capture_pct");
     expect(s.targetDateMode).toBe("tomorrow_only");
     expect(s.obsBackedOnly).toBe(true);
+  });
+});
+
+describe("maySuppressStopLoss", () => {
+  it("never suppresses without a fresh model snapshot", () => {
+    expect(maySuppressStopLoss(null, 60, 30)).toBe(false);
+  });
+
+  it("no longer suppresses at merely 50-74% model win", () => {
+    // The old >=50% bar rode 12 losers to settlement
+    expect(maySuppressStopLoss(0.5, 60, 30)).toBe(false);
+    expect(maySuppressStopLoss(0.74, 60, 30)).toBe(false);
+  });
+
+  it("suppresses on a moderate drawdown when the model is confident", () => {
+    // bid 40¢ on a 60¢ cost: 33% down, model 80% — hold through the dip
+    expect(maySuppressStopLoss(0.8, 60, 40)).toBe(true);
+  });
+
+  it("trusts a collapsed market over even a certain model", () => {
+    // bid 10¢ on a 60¢ cost — book says dead; cut regardless of model claims
+    expect(maySuppressStopLoss(0.99, 60, 10)).toBe(false);
+  });
+
+  it("still suppresses a cheap-entry dip that is not a collapse", () => {
+    // cost 20¢, bid 12¢: bid <= 15¢ but only 40% drawdown — stale-book zone
+    expect(maySuppressStopLoss(0.9, 20, 12)).toBe(true);
+  });
+});
+
+describe("sanitizeSettings — v2 risk fields", () => {
+  it("defaults and clamps the new filters", () => {
+    const d = sanitizeSettings(undefined);
+    expect(d.minPriceCents).toBe(40);
+    expect(d.maxProbGap).toBe(0.35);
+    expect(d.maxDailyLossCents).toBe(150);
+
+    const s = sanitizeSettings({ minPriceCents: 500, maxProbGap: 0, maxDailyLossCents: -5 });
+    expect(s.minPriceCents).toBe(99);
+    expect(s.maxProbGap).toBe(0.05);
+    expect(s.maxDailyLossCents).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { sameDayTailClampProb } from "@/lib/predictor";
-import { KalshiMarket } from "@/types";
+import { detectMetric, sameDayTailClampProb } from "@/lib/predictor";
+import { KalshiEvent, KalshiMarket } from "@/types";
 
 function makeMarket(overrides: Partial<KalshiMarket> & { ticker: string }): KalshiMarket {
   return {
@@ -62,5 +62,56 @@ describe("sameDayTailClampProb", () => {
   it("never raises a probability", () => {
     const m = makeMarket({ ticker: "T84", strike_type: "greater", floor_strike: 84 });
     expect(sameDayTailClampProb(0.001, m, "temperature_low", 79)).toBe(0.001);
+  });
+});
+
+describe("detectMetric — hourly temperature series", () => {
+  function makeEvent(overrides: Partial<KalshiEvent>): KalshiEvent {
+    return {
+      event_ticker: "EVT-1",
+      series_ticker: "KXHIGHNY",
+      title: "Highest temperature in NYC on Jul 9, 2026?",
+      sub_title: "",
+      category: "Climate and Weather",
+      strike_date: null,
+      markets: [makeMarket({ ticker: "EVT-1-M" })],
+      ...overrides,
+    };
+  }
+
+  it("classifies hourly-settlement series as unknown by series ticker", () => {
+    expect(
+      detectMetric(
+        makeEvent({
+          series_ticker: "KXTEMPNYCH",
+          title: "New York City temperature on Jul 9, 2026 at 10am EDT?",
+          sub_title: "On Jul 9, 2026 at 10am EDT",
+        }),
+      ),
+    ).toBe("unknown");
+    expect(detectMetric(makeEvent({ series_ticker: "KXTEMPLAXH", title: "Los Angeles temperature on Jul 9, 2026 at 9am EDT?" }))).toBe("unknown");
+  });
+
+  it("classifies hourly markets as unknown by title when series is missing", () => {
+    expect(
+      detectMetric(
+        makeEvent({
+          series_ticker: "",
+          title: "Chicago temperature on Jul 9, 2026 at 12pm EDT?",
+        }),
+      ),
+    ).toBe("unknown");
+  });
+
+  it("keeps daily high/low series classified as before", () => {
+    expect(detectMetric(makeEvent({}))).toBe("temperature_high");
+    expect(
+      detectMetric(
+        makeEvent({
+          series_ticker: "KXLOWTCHI",
+          title: "Lowest temperature in Chicago on Jul 9, 2026?",
+        }),
+      ),
+    ).toBe("temperature_low");
   });
 });

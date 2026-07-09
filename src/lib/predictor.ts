@@ -168,6 +168,18 @@ export function detectMetric(event: KalshiEvent): WeatherMetric {
   const rules = event.markets?.[0]?.rules_primary || "";
   const haystack = `${event.title} ${event.sub_title} ${rules}`.toLowerCase();
 
+  // Hourly-settlement temperature series (KXTEMPNYCH etc., "NYC temperature
+  // on Jul 9 at 10am EDT?") settle on the reading AT one hour, not the daily
+  // extreme. The daily high/low pipeline fundamentally misprices them (it
+  // claimed up to 99.99% on markets the book priced at 6¢ and went 0-for-12
+  // live), so classify them as unknown — predictEvent then skips them.
+  if (
+    /^KXTEMP[A-Z]*H$/.test(event.series_ticker || "") ||
+    /\btemperature on .{3,20} at \d{1,2}\s?[ap]m\b/.test(haystack)
+  ) {
+    return "unknown";
+  }
+
   // Check precipitation first (most specific)
   if (/\brain\b|rainfall|precipitation|inches of rain/.test(haystack)) {
     return "precipitation";
@@ -612,6 +624,7 @@ export function predictEvent(
 
   // Detect the weather metric type for this event
   const metric = detectMetric(event);
+  if (metric === "unknown") return null; // e.g. hourly temp series — no model for these
   const unit = metricUnit(metric);
 
   // Handle monthly precipitation/snowfall events
@@ -832,6 +845,7 @@ export function predictMultiCityEvent(
   if (!event.markets || event.markets.length === 0) return null;
 
   const metric = detectMetric(event);
+  if (metric === "unknown") return null;
   const unit = metricUnit(metric);
 
   const primary = getPrimaryMarket(event.markets);

@@ -36,6 +36,22 @@ export interface AutomationSettings {
   maxOpenPositions: number;
   /** AI review gate: only "keep" verdicts at or above this confidence buy. */
   minAiConfidence: number; // 0-1
+  /**
+   * Skip buys with an ask below this. Cheap contracts are where the model
+   * disagrees hardest with the market — live record 6 wins / 35 trades,
+   * −$5.27 under 40¢ vs +$0.75 at 40¢+.
+   */
+  minPriceCents: number;
+  /**
+   * Skip buys where blended winProb exceeds market-implied prob by more than
+   * this. When model and market disagree wildly, the market has been right.
+   */
+  maxProbGap: number; // 0-1
+  /**
+   * Circuit breaker: halt the buy pass (sells keep running) once realized
+   * losses over the trailing 24h reach this many cents. 0 disables it.
+   */
+  maxDailyLossCents: number;
 }
 
 export const AUTOMATION_SETTINGS_KEY = "automation_settings";
@@ -56,6 +72,9 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   maxBuysPerRun: 3,
   maxOpenPositions: 10,
   minAiConfidence: 0.6,
+  minPriceCents: 40,
+  maxProbGap: 0.35,
+  maxDailyLossCents: 150,
 };
 
 function clampNumber(v: unknown, min: number, max: number, fallback: number): number {
@@ -93,6 +112,9 @@ export function sanitizeSettings(raw: unknown): AutomationSettings {
     maxBuysPerRun: clampInt(s.maxBuysPerRun, 1, 20, d.maxBuysPerRun),
     maxOpenPositions: clampInt(s.maxOpenPositions, 1, 100, d.maxOpenPositions),
     minAiConfidence: clampNumber(s.minAiConfidence, 0, 1, d.minAiConfidence),
+    minPriceCents: clampInt(s.minPriceCents, 1, 99, d.minPriceCents),
+    maxProbGap: clampNumber(s.maxProbGap, 0.05, 1, d.maxProbGap),
+    maxDailyLossCents: clampInt(s.maxDailyLossCents, 0, 1_000_000, d.maxDailyLossCents),
   };
 }
 

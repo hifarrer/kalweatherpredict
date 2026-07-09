@@ -24,6 +24,9 @@ interface AutomationSettings {
   maxBuysPerRun: number;
   maxOpenPositions: number;
   minAiConfidence: number;
+  minPriceCents: number;
+  maxProbGap: number;
+  maxDailyLossCents: number;
 }
 
 interface PositionRow {
@@ -453,6 +456,51 @@ export default function AutomationPage() {
                   onChange={(e) => set("minScore", parseFloat(e.target.value || "0"))}
                   className={inputCls}
                 />
+              </div>
+
+              <div>
+                <label className={labelCls}>Min entry price (¢)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={form.minPriceCents}
+                  onChange={(e) => set("minPriceCents", parseInt(e.target.value || "1", 10))}
+                  className={inputCls}
+                />
+                <p className="mt-1 text-[11px] text-kalshi-muted">
+                  Cheap contracts = model vs market disagreement; those lost badly
+                </p>
+              </div>
+              <div>
+                <label className={labelCls}>Max model-vs-market gap (%)</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={100}
+                  value={Math.round(form.maxProbGap * 100)}
+                  onChange={(e) => set("maxProbGap", parseFloat(e.target.value || "0") / 100)}
+                  className={inputCls}
+                />
+                <p className="mt-1 text-[11px] text-kalshi-muted">
+                  Skip buys where the model claims this much more than the market implies
+                </p>
+              </div>
+              <div>
+                <label className={labelCls}>Daily loss circuit breaker ($, 0 = off)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={form.maxDailyLossCents / 100}
+                  onChange={(e) =>
+                    set("maxDailyLossCents", Math.round(parseFloat(e.target.value || "0") * 100))
+                  }
+                  className={inputCls}
+                />
+                <p className="mt-1 text-[11px] text-kalshi-muted">
+                  Buying halts for the day once 24h realized losses reach this; selling continues
+                </p>
               </div>
 
               <div>

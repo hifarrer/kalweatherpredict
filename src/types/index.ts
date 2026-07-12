@@ -164,8 +164,9 @@ export interface PredictionResult {
   multiCity?: boolean; // multi-city: flag for UI rendering
   targetDate?: string; // YYYY-MM-DD local date the prediction is for
   leadDays?: number; // days between now and the target date (0 = today)
-  sigma?: number; // stddev used for probability estimation
+  sigma?: number; // stddev used for probability estimation (crypto: log-space σ√τ)
   modelSpread?: number; // cross-model stddev for the target day
+  tauHours?: number; // crypto: hours until settlement at prediction time
   agreement?: ModelAgreement; // model consensus classification
   alreadyDecided?: boolean; // same-day observations have locked the outcome
   observedSoFar?: number; // same-day running value (max temp / precip total)

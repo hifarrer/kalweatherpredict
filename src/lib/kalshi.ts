@@ -120,6 +120,47 @@ export async function getWeatherEvents(): Promise<KalshiEvent[]> {
 }
 
 /**
+ * Fetch events for one series (with nested markets), paging until done.
+ * Generic — used by the crypto section, which knows its series tickers
+ * up front instead of keyword-filtering the full series list.
+ */
+export async function getEventsBySeries(
+  seriesTicker: string,
+  status: "open" | "settled" | "closed" = "open",
+  opts?: { minCloseTs?: number; maxPages?: number },
+): Promise<KalshiEvent[]> {
+  const events: KalshiEvent[] = [];
+  let cursor = "";
+  let pages = 0;
+
+  while (true) {
+    const params = new URLSearchParams();
+    params.set("series_ticker", seriesTicker);
+    params.set("status", status);
+    params.set("with_nested_markets", "true");
+    params.set("limit", "200");
+    if (opts?.minCloseTs) params.set("min_close_ts", String(opts.minCloseTs));
+    if (cursor) params.set("cursor", cursor);
+
+    const url = `${KALSHI_BASE}/events?${params.toString()}`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`Kalshi /events returned ${res.status}: ${await res.text()}`);
+    }
+
+    const data = await res.json();
+    events.push(...((data.events || []) as KalshiEvent[]));
+
+    cursor = data.cursor || "";
+    pages++;
+    if (!cursor || (opts?.maxPages && pages >= opts.maxPages)) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  return events;
+}
+
+/**
  * Get a single event by ticker (with nested markets).
  */
 export async function getEvent(eventTicker: string): Promise<KalshiEvent | null> {

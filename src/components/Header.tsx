@@ -8,17 +8,34 @@ interface HeaderProps {
   loading?: boolean;
 }
 
-const NAV_LINKS = [
-  { href: "/", label: "Dashboard" },
-  { href: "/advantage", label: "AI Advantage" },
-  { href: "/automation", label: "Automation" },
-  { href: "/stats", label: "Stats" },
-  { href: "/history", label: "History" },
+type Section = "weather" | "crypto" | null;
+
+const WEATHER_NAV = [
+  { href: "/weather", label: "Dashboard" },
+  { href: "/weather/advantage", label: "AI Advantage" },
+  { href: "/weather/automation", label: "Automation" },
+  { href: "/weather/stats", label: "Stats" },
+  { href: "/weather/history", label: "History" },
 ];
+
+const CRYPTO_NAV = [
+  { href: "/crypto", label: "Dashboard" },
+  { href: "/crypto/automation", label: "Automation" },
+  { href: "/crypto/stats", label: "Stats" },
+  { href: "/crypto/history", label: "History" },
+];
+
+function sectionFromPath(pathname: string): Section {
+  if (pathname === "/crypto" || pathname.startsWith("/crypto/")) return "crypto";
+  if (pathname === "/weather" || pathname.startsWith("/weather/")) return "weather";
+  return null;
+}
 
 export default function Header({ onRefresh, loading = false }: HeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const section = sectionFromPath(pathname);
+  const navLinks = section === "crypto" ? CRYPTO_NAV : section === "weather" ? WEATHER_NAV : [];
 
   async function handleLogout() {
     await fetch("/api/logout", { method: "POST" }).catch(() => {});
@@ -30,19 +47,46 @@ export default function Header({ onRefresh, loading = false }: HeaderProps) {
     <header className="border-b border-kalshi-border bg-kalshi-surface/50 backdrop-blur-md sticky top-0 z-50">
       <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 shrink-0">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-kalshi-orange to-orange-600 flex items-center justify-center text-white font-bold text-lg shadow-lg">
+          <Link
+            href="/"
+            className="w-10 h-10 rounded-xl bg-gradient-to-br from-kalshi-orange to-orange-600 flex items-center justify-center text-white font-bold text-lg shadow-lg"
+            title="Home"
+          >
             KW
-          </div>
+          </Link>
           <div className="hidden md:block">
             <h1 className="text-xl font-bold text-kalshi-text leading-tight">
-              Kalshi Weather
+              {section === "crypto" ? "Kalshi Crypto Perps" : "Kalshi Weather"}
             </h1>
             <p className="text-xs text-kalshi-muted">Prediction Markets + Forecast Analysis</p>
+          </div>
+          {/* Section switcher */}
+          <div className="flex items-center rounded-lg bg-black/30 border border-kalshi-border p-0.5 ml-2">
+            <Link
+              href="/weather"
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                section === "weather"
+                  ? "bg-kalshi-orange text-white"
+                  : "text-kalshi-muted hover:text-kalshi-text"
+              }`}
+            >
+              Weather
+            </Link>
+            <Link
+              href="/crypto"
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                section === "crypto"
+                  ? "bg-kalshi-orange text-white"
+                  : "text-kalshi-muted hover:text-kalshi-text"
+              }`}
+            >
+              Crypto
+            </Link>
           </div>
         </div>
 
         <nav className="flex items-center gap-1">
-          {NAV_LINKS.map(({ href, label }) => {
+          {navLinks.map(({ href, label }) => {
             const active = pathname === href;
             return (
               <Link

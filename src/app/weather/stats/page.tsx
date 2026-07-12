@@ -94,7 +94,7 @@ export default function StatsPage() {
             </p>
           </div>
           <a
-            href="/"
+            href="/weather"
             className="text-sm text-kalshi-muted hover:text-kalshi-orange font-medium transition-colors"
           >
             ← Dashboard

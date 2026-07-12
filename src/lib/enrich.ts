@@ -20,9 +20,9 @@ const EDGE_MIN_VOLUME = 100;
 
 /**
  * Largest absolute forecast-vs-market probability gap among an event's
- * liquid markets. Drives the "edge" sort.
+ * liquid markets. Drives the "edge" sort. Shared with the crypto enricher.
  */
-function computeMaxEdge(
+export function computeMaxEdge(
   prediction: PredictionResult | null,
   event: KalshiEvent,
 ): number | undefined {

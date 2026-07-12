@@ -307,6 +307,13 @@ export function startSyncScheduler() {
 
   console.log("[sync] starting background scheduler");
 
+  // Crypto jobs run after the weather chain with their own import + catch so
+  // a crypto failure can never break weather (and vice versa).
+  const runCryptoChain = () =>
+    import("@/lib/crypto/cryptoSync")
+      .then((m) => m.runCryptoJobs())
+      .catch((err) => console.error("[sync] crypto jobs error:", err));
+
   // Kick off an initial sync (non-blocking) if needed
   (async () => {
     try {
@@ -323,13 +330,16 @@ export function startSyncScheduler() {
       await runTrackingJobs();
     } catch (err) {
       console.error("[sync] initial sync check failed:", err);
+    } finally {
+      await runCryptoChain();
     }
   })();
 
   setInterval(() => {
     runFullSync()
       .then(() => runTrackingJobs())
-      .catch((err) => console.error("[sync] scheduled sync error:", err));
+      .catch((err) => console.error("[sync] scheduled sync error:", err))
+      .finally(runCryptoChain);
   }, SCHEDULER_INTERVAL_MS);
 }
 

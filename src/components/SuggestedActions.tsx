@@ -10,6 +10,8 @@ import { TradeSuggestion } from "./TradeModal";
 interface SuggestedActionsProps {
   enriched: EnrichedEvent;
   onBuy: (market: KalshiMarket, side: BuySide, suggestion?: TradeSuggestion) => void;
+  /** AI review endpoint; the crypto dashboard points this at /api/crypto/review. */
+  reviewEndpoint?: string;
 }
 
 interface ReviewVerdictRow {
@@ -38,7 +40,11 @@ const VERDICT_STYLES: Record<ReviewVerdictRow["verdict"], { label: string; cls: 
  * ranked by fee-adjusted, risk-weighted expected value. An on-demand
  * "AI review" button has Claude critique each pick (cached server-side).
  */
-export default function SuggestedActions({ enriched, onBuy }: SuggestedActionsProps) {
+export default function SuggestedActions({
+  enriched,
+  onBuy,
+  reviewEndpoint = "/api/suggest/review",
+}: SuggestedActionsProps) {
   const suggestions = useMemo(() => computeSuggestedActions(enriched), [enriched]);
   const marketByTicker = useMemo(
     () => new Map((enriched.event.markets ?? []).map((m) => [m.ticker, m])),
@@ -59,7 +65,7 @@ export default function SuggestedActions({ enriched, onBuy }: SuggestedActionsPr
     setReviewing(true);
     setReviewError(null);
     try {
-      const res = await fetch("/api/suggest/review", {
+      const res = await fetch(reviewEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ eventTicker: enriched.event.event_ticker }),

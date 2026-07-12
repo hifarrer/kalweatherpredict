@@ -17,20 +17,28 @@ import {
  * The `data` jsonb column stores the full KalshiEvent (including nested markets)
  * so the dashboard can render entirely from the DB without hitting the Kalshi API.
  */
-export const events = pgTable("events", {
-  eventTicker: text("event_ticker").primaryKey(),
-  seriesTicker: text("series_ticker").notNull(),
-  title: text("title").notNull(),
-  subTitle: text("sub_title"),
-  category: text("category"),
-  strikeDate: text("strike_date"),
-  cityCode: text("city_code"),
-  status: text("status").notNull().default("open"), // "open" | "expired"
-  data: jsonb("data").notNull(),
-  earliestClose: text("earliest_close"),
-  firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
-  lastUpdatedAt: timestamp("last_updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const events = pgTable(
+  "events",
+  {
+    eventTicker: text("event_ticker").primaryKey(),
+    seriesTicker: text("series_ticker").notNull(),
+    title: text("title").notNull(),
+    subTitle: text("sub_title"),
+    category: text("category"),
+    strikeDate: text("strike_date"),
+    cityCode: text("city_code"),
+    /** Which app section owns this event: "weather" | "crypto". */
+    section: text("section").notNull().default("weather"),
+    /** Crypto asset code ("BTC" | "ETH"), the crypto analog of city_code. */
+    asset: text("asset"),
+    status: text("status").notNull().default("open"), // "open" | "expired"
+    data: jsonb("data").notNull(),
+    earliestClose: text("earliest_close"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
+    lastUpdatedAt: timestamp("last_updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("events_section_status_idx").on(t.section, t.status)],
+);
 
 /**
  * Application users.
@@ -75,6 +83,8 @@ export const orders = pgTable(
     status: text("status").notNull().default("pending"), // pending | executed | canceled | failed
     /** Who placed the order: "manual" (UI) or "auto" (automation engine). */
     source: text("source").notNull().default("manual"),
+    /** Which app section the order belongs to: "weather" | "crypto". */
+    section: text("section").notNull().default("weather"),
     kalshiOrderId: text("kalshi_order_id"),
     /** Snapshot of the AI suggestion this order was placed from, if any. */
     suggestionId: bigint("suggestion_id", { mode: "number" }),
@@ -108,8 +118,12 @@ export const predictionSnapshots = pgTable(
     capturedAt: timestamp("captured_at", { withTimezone: true }).defaultNow().notNull(),
     targetDate: text("target_date"),
     cityCode: text("city_code"),
+    section: text("section").notNull().default("weather"), // "weather" | "crypto"
+    asset: text("asset"), // crypto asset code, null for weather
     metric: text("metric").notNull(),
     leadDays: integer("lead_days"),
+    /** Hours until settlement at capture time — crypto's analog of lead_days. */
+    tauHours: real("tau_hours"),
     forecastValue: real("forecast_value"),
     sigma: real("sigma"),
     modelSpread: real("model_spread"),
@@ -154,9 +168,13 @@ export const suggestions = pgTable(
     volume24h: real("volume_24h"),
     // Event context
     cityCode: text("city_code"),
+    section: text("section").notNull().default("weather"), // "weather" | "crypto"
+    asset: text("asset"), // crypto asset code, null for weather
     metric: text("metric"),
     targetDate: text("target_date"),
     leadDays: integer("lead_days"),
+    /** Hours until settlement at suggestion time — crypto's analog of lead_days. */
+    tauHours: real("tau_hours"),
     aiVerdict: text("ai_verdict"), // keep | downgrade | veto
     aiConfidence: real("ai_confidence"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -194,6 +212,8 @@ export const automationPositions = pgTable(
     suggestionId: bigint("suggestion_id", { mode: "number" }),
     status: text("status").notNull().default("open"), // open | closing | closed
     cityCode: text("city_code"),
+    section: text("section").notNull().default("weather"), // "weather" | "crypto"
+    asset: text("asset"), // crypto asset code, null for weather
     metric: text("metric"),
     targetDate: text("target_date"),
     // Exit — filled when the position closes
@@ -208,6 +228,7 @@ export const automationPositions = pgTable(
   (t) => [
     index("auto_pos_status_idx").on(t.status),
     index("auto_pos_ticker_idx").on(t.ticker),
+    index("auto_pos_section_status_idx").on(t.section, t.status),
   ],
 );
 
@@ -220,6 +241,7 @@ export const automationRuns = pgTable(
     id: bigserial("id", { mode: "number" }).primaryKey(),
     trigger: text("trigger").notNull().default("cron"), // cron | manual
     status: text("status").notNull().default("running"), // running | ok | error | skipped
+    section: text("section").notNull().default("weather"), // "weather" | "crypto"
     balanceCents: integer("balance_cents"),
     deployedCents: integer("deployed_cents"),
     candidates: integer("candidates"),
@@ -267,6 +289,8 @@ export const settlements = pgTable(
     marketTicker: text("market_ticker").primaryKey(),
     eventTicker: text("event_ticker").notNull(),
     cityCode: text("city_code"),
+    section: text("section").notNull().default("weather"), // "weather" | "crypto"
+    asset: text("asset"), // crypto asset code, null for weather
     metric: text("metric"),
     targetDate: text("target_date"),
     result: text("result").notNull(), // "yes" | "no"

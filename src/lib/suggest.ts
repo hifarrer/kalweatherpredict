@@ -1,4 +1,4 @@
-import { EnrichedEvent, KalshiMarket } from "@/types";
+import { EnrichedEvent, KalshiMarket, MetricKind } from "@/types";
 
 /** Minimum 24h volume for a market to be suggestible (matches EDGE_MIN_VOLUME). */
 export const SUGGEST_MIN_VOLUME = 100;
@@ -135,10 +135,7 @@ export function computeSuggestedActions(
   if (!event.markets || !likelihoods || likelihoods.length === 0) return [];
 
   const marketByTicker = new Map(event.markets.map((m) => [m.ticker, m]));
-  const unit =
-    enriched.subcategory === "precipitation" || enriched.subcategory === "snowfall"
-      ? '"'
-      : "°F";
+  const unit = metricUnit(enriched.subcategory);
 
   const candidates: SuggestedAction[] = [];
 
@@ -252,6 +249,13 @@ export function computeSuggestedActions(
   }
 
   return deduped.sort((a, b) => b.score - a.score).slice(0, cap);
+}
+
+/** Display unit for a metric kind, used in consensus rationale text. */
+function metricUnit(metric: MetricKind): string {
+  if (metric === "crypto_price") return "$";
+  if (metric === "precipitation" || metric === "snowfall") return '"';
+  return "°F";
 }
 
 /** Distance from a forecast value to a market's strike center; null if no strikes. */

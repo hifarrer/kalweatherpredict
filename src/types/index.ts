@@ -104,6 +104,13 @@ export type WeatherMetric =
   | "snowfall"
   | "unknown";
 
+/**
+ * All metric kinds a prediction can be about — weather metrics plus the
+ * crypto "price at settlement time" markets. Lets crypto events ride the
+ * same EnrichedEvent/PredictionResult pipeline as weather.
+ */
+export type MetricKind = WeatherMetric | "crypto_price";
+
 export interface WeatherForecast {
   city: string;
   todayHigh: number | null;
@@ -149,7 +156,7 @@ export interface PredictionResult {
   forecastValue: number | null;
   matchedMarket: KalshiMarket | null;
   detail: string;
-  metric: WeatherMetric;
+  metric: MetricKind;
   unit: string;
   coverage?: number; // fraction of month covered by forecast (0-1) for monthly events
   marketLikelihoods?: MarketLikelihood[]; // probability for every market
@@ -174,8 +181,10 @@ export interface EnrichedEvent {
   earliestClose: string;
   prediction: PredictionResult | null;
   opportunityScore?: number;
-  subcategory: WeatherMetric;
+  subcategory: MetricKind;
   maxEdge?: number; // largest |forecast - market| probability gap among liquid markets
+  /** Crypto asset code ("BTC" | "ETH") — the crypto analog of cityCode. */
+  asset?: string | null;
 }
 
 // AI analysis result

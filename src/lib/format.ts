@@ -1,8 +1,26 @@
-import { KalshiMarket, WeatherMetric } from "@/types";
+import { KalshiMarket, MetricKind } from "@/types";
 
-/** Human-readable strike label, e.g. "> 85°F" or "83-84°F". */
-export function formatStrike(m: KalshiMarket, subcategory: WeatherMetric): string {
+/** Human-readable strike label, e.g. "> 85°F", "83-84°F", or "> $64,200". */
+export function formatStrike(m: KalshiMarket, subcategory: MetricKind): string {
   if (!m.strike_type) return "";
+  if (subcategory === "crypto_price") {
+    const fmt = (v: number) => `$${v.toLocaleString("en-US")}`;
+    switch (m.strike_type) {
+      case "greater":
+      case "greater_or_equal":
+        return m.floor_strike !== null ? `> ${fmt(m.floor_strike)}` : "";
+      case "less":
+      case "less_or_equal":
+        return m.cap_strike !== null ? `< ${fmt(m.cap_strike)}` : "";
+      case "between":
+        if (m.floor_strike !== null && m.cap_strike !== null) {
+          return `${fmt(m.floor_strike)}-${fmt(m.cap_strike)}`;
+        }
+        return "";
+      default:
+        return "";
+    }
+  }
   const unit =
     subcategory === "precipitation" || subcategory === "snowfall" ? "in" : "°F";
   switch (m.strike_type) {

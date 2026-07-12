@@ -53,6 +53,7 @@ export async function GET() {
       LEFT JOIN events e ON e.event_ticker = o.event_ticker
       LEFT JOIN settlements s ON s.market_ticker = o.ticker
       LEFT JOIN suggestions sg ON sg.id = o.suggestion_id
+      WHERE o.section = 'weather'
       ORDER BY o.created_at DESC
       LIMIT 500
     `);

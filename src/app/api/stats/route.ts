@@ -83,6 +83,7 @@ export async function GET(req: NextRequest) {
       WITH latest AS (
         SELECT DISTINCT ON (s.market_ticker) *
         FROM prediction_snapshots s
+        WHERE s.section = 'weather'
         ORDER BY s.market_ticker, s.is_final DESC, s.captured_at DESC
       )
       SELECT l.market_ticker, l.event_ticker, l.city_code, l.metric, l.lead_days,

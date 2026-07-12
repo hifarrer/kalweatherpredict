@@ -32,6 +32,7 @@ export async function recomputeSigmaCalibration(): Promise<SigmaCalibration> {
       WHERE st.actual_value IS NOT NULL
         AND s.forecast_value IS NOT NULL
         AND s.lead_days IS NOT NULL
+        AND s.section = 'weather'
       ORDER BY s.event_ticker, s.lead_days, s.captured_at DESC
     )
     SELECT

@@ -70,6 +70,7 @@ export async function snapshotPredictions(opts?: { finalOnly?: boolean }): Promi
           score: s.score,
           volume24h: s.volume24h,
           cityCode: e.cityCode,
+          section: "weather",
           metric: prediction.metric,
           targetDate: prediction.targetDate ?? null,
           leadDays: prediction.leadDays ?? null,
@@ -97,6 +98,7 @@ export async function snapshotPredictions(opts?: { finalOnly?: boolean }): Promi
         marketTicker: ml.ticker,
         targetDate: prediction.targetDate ?? null,
         cityCode: ml.cityCode ?? e.cityCode,
+        section: "weather",
         metric: prediction.metric,
         leadDays: prediction.leadDays ?? null,
         forecastValue: ml.forecastValue ?? prediction.forecastValue,
@@ -173,6 +175,7 @@ export async function fetchSettlements(): Promise<number> {
     .where(
       and(
         eq(events.status, "expired"),
+        eq(events.section, "weather"),
         gte(events.earliestClose, cutoffIso),
       ),
     );
@@ -212,6 +215,7 @@ export async function fetchSettlements(): Promise<number> {
           marketTicker: m.ticker,
           eventTicker: fresh.event_ticker,
           cityCode: row.cityCode,
+          section: "weather",
           metric,
           targetDate:
             titleDate ??

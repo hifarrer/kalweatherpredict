@@ -1,10 +1,10 @@
-import { KalshiMarket, MarketLikelihood, ModelAgreement, WeatherMetric } from "@/types";
+import { KalshiMarket, MarketLikelihood, MetricKind, ModelAgreement } from "@/types";
 import { impliedMarketProb } from "@/lib/predictor";
 import { formatStrike, formatVolume } from "@/lib/format";
 
 interface MarketsListProps {
   markets: KalshiMarket[] | undefined;
-  subcategory?: WeatherMetric;
+  subcategory?: MetricKind;
   marketLikelihoods?: MarketLikelihood[];
   agreement?: ModelAgreement;
 }

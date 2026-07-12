@@ -1,6 +1,6 @@
 "use client";
 
-import { KalshiMarket, MarketLikelihood, ModelAgreement, WeatherMetric } from "@/types";
+import { KalshiMarket, MarketLikelihood, MetricKind, ModelAgreement } from "@/types";
 import { impliedMarketProb } from "@/lib/predictor";
 import { formatCents, formatStrike, formatVolume } from "@/lib/format";
 
@@ -8,7 +8,7 @@ export type BuySide = "yes" | "no";
 
 interface MarketsTableProps {
   markets: KalshiMarket[] | undefined;
-  subcategory?: WeatherMetric;
+  subcategory?: MetricKind;
   marketLikelihoods?: MarketLikelihood[];
   agreement?: ModelAgreement;
   /** When provided, each row shows Buy Yes/No buttons (Phase 3 trading). */

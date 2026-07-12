@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { desc, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   automationActions,
@@ -31,7 +31,12 @@ export async function GET() {
   const openPositions = await db
     .select()
     .from(automationPositions)
-    .where(inArray(automationPositions.status, ["open", "closing"]))
+    .where(
+      and(
+        inArray(automationPositions.status, ["open", "closing"]),
+        eq(automationPositions.section, "weather"),
+      ),
+    )
     .orderBy(desc(automationPositions.openedAt));
 
   // Current bids from the cached events table (fresh enough for display)
@@ -70,11 +75,17 @@ export async function GET() {
       total: sql<number>`coalesce(sum(${automationPositions.realizedPnlCents}), 0)::int`,
     })
     .from(automationPositions)
-    .where(isNotNull(automationPositions.realizedPnlCents));
+    .where(
+      and(
+        isNotNull(automationPositions.realizedPnlCents),
+        eq(automationPositions.section, "weather"),
+      ),
+    );
 
   const runs = await db
     .select()
     .from(automationRuns)
+    .where(eq(automationRuns.section, "weather"))
     .orderBy(desc(automationRuns.startedAt))
     .limit(RECENT_RUNS);
 

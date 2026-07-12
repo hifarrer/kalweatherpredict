@@ -216,7 +216,12 @@ async function getOpenPositions(): Promise<OpenPosition[]> {
   return db
     .select()
     .from(automationPositions)
-    .where(inArray(automationPositions.status, ["open", "closing"]));
+    .where(
+      and(
+        inArray(automationPositions.status, ["open", "closing"]),
+        eq(automationPositions.section, "weather"),
+      ),
+    );
 }
 
 function deployedCents(positions: OpenPosition[]): number {
@@ -424,6 +429,7 @@ async function sellPass(
           maxCostCents: sellCount * minProceeds,
           status: "pending",
           source: "auto",
+          section: "weather",
           suggestionId: pos.suggestionId,
         })
         .returning({ id: orders.id });
@@ -537,6 +543,7 @@ async function trailing24hRealizedPnl(): Promise<number> {
     SELECT COALESCE(SUM(realized_pnl_cents), 0) AS pnl
     FROM automation_positions
     WHERE closed_at > now() - interval '24 hours'
+      AND section = 'weather'
   `);
   return Number(res.rows[0]?.pnl ?? 0);
 }
@@ -547,6 +554,7 @@ async function recentStopLossTickers(): Promise<Set<string>> {
     SELECT DISTINCT ticker
     FROM automation_positions
     WHERE exit_reason = 'stop_loss'
+      AND section = 'weather'
       AND closed_at > now() - (${STOP_LOSS_COOLDOWN_HOURS} || ' hours')::interval
   `);
   return new Set(res.rows.map((r) => String((r as { ticker: string }).ticker)));
@@ -768,6 +776,7 @@ async function buyPass(
             score: s.score,
             volume24h: s.volume24h,
             cityCode: enriched.cityCode,
+            section: "weather",
             metric: enriched.subcategory,
             targetDate: enriched.prediction?.targetDate ?? null,
             leadDays,
@@ -795,6 +804,7 @@ async function buyPass(
           maxCostCents: n * maxPriceCents,
           status: "pending",
           source: "auto",
+          section: "weather",
           suggestionId,
         })
         .returning({ id: orders.id });
@@ -848,6 +858,7 @@ async function buyPass(
           suggestionId,
           status: "open",
           cityCode: enriched.cityCode,
+          section: "weather",
           metric: enriched.subcategory,
           targetDate: enriched.prediction?.targetDate ?? null,
         })
@@ -923,7 +934,7 @@ export async function runAutoTrade(trigger: "cron" | "manual"): Promise<RunSumma
   try {
     const [runRow] = await db
       .insert(automationRuns)
-      .values({ trigger, status: "running" })
+      .values({ trigger, status: "running", section: "weather" })
       .returning({ id: automationRuns.id });
     runId = runRow.id;
     summary.runId = runId;

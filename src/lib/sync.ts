@@ -115,6 +115,7 @@ async function doFullSync(): Promise<number> {
         category: e.category || null,
         strikeDate: e.strike_date || null,
         cityCode,
+        section: "weather",
         status: "open",
         data: e as unknown as Record<string, unknown>,
         earliestClose,
@@ -128,6 +129,7 @@ async function doFullSync(): Promise<number> {
           category: e.category || null,
           strikeDate: e.strike_date || null,
           cityCode,
+          section: "weather",
           status: "open",
           data: e as unknown as Record<string, unknown>,
           earliestClose,
@@ -341,8 +343,10 @@ export interface DbEventRow {
 }
 
 /**
- * Fetch all open events from the DB, reconstructing KalshiEvent objects
- * alongside the precomputed cityCode and earliestClose columns.
+ * Fetch all open weather events from the DB, reconstructing KalshiEvent
+ * objects alongside the precomputed cityCode and earliestClose columns.
+ * Crypto events live in the same table under section = "crypto" and are
+ * served by src/lib/crypto/cryptoSync.ts.
  */
 export async function getOpenEventsFromDb(): Promise<DbEventRow[]> {
   const rows = await db
@@ -352,7 +356,7 @@ export async function getOpenEventsFromDb(): Promise<DbEventRow[]> {
       earliestClose: events.earliestClose,
     })
     .from(events)
-    .where(eq(events.status, "open"));
+    .where(and(eq(events.status, "open"), eq(events.section, "weather")));
 
   return rows.map((r) => ({
     event: r.data as unknown as KalshiEvent,

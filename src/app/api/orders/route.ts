@@ -115,7 +115,12 @@ export async function POST(req: NextRequest) {
   // Validate the market exists in our cached open events (defense against
   // arbitrary-ticker orders from a compromised/buggy client).
   const rows = await db
-    .select({ data: events.data, cityCode: events.cityCode })
+    .select({
+      data: events.data,
+      cityCode: events.cityCode,
+      section: events.section,
+      asset: events.asset,
+    })
     .from(events)
     .where(eq(events.eventTicker, eventTicker));
   const event = rows[0]?.data as unknown as KalshiEvent | undefined;
@@ -156,6 +161,8 @@ export async function POST(req: NextRequest) {
           score: sugg.score!,
           volume24h: isFiniteNumber(sugg.volume24h) ? sugg.volume24h : null,
           cityCode: rows[0]?.cityCode ?? null,
+          section: rows[0]?.section ?? "weather",
+          asset: rows[0]?.asset ?? null,
           metric: typeof sugg.metric === "string" ? sugg.metric : null,
           targetDate: typeof sugg.targetDate === "string" ? sugg.targetDate : null,
           leadDays: isFiniteNumber(sugg.leadDays) ? sugg.leadDays : null,
@@ -186,6 +193,7 @@ export async function POST(req: NextRequest) {
       count: count!,
       maxCostCents: count! * maxPriceCents,
       status: "pending",
+      section: rows[0]?.section ?? "weather",
       suggestionId,
     })
     .returning({ id: orders.id });

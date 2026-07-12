@@ -51,12 +51,16 @@ export interface CryptoModelParams {
 }
 
 /**
- * Defaults tuned by the backtest harness (see docs/backtest-report.md).
- * Short-horizon buckets lean on short realized-vol windows; long horizons
- * lean on the 24h window and implied vol.
+ * Defaults tuned by the backtest harness on 930 settled BTC/ETH events
+ * (docs/backtest-report.md, 2026-07 run):
+ * - rms vol beat ewma by a hair and is simpler;
+ * - ivBlendBeta 0: Deribit DVOL is 30-day implied vol — useless at the
+ *   sub-hour horizons these markets trade at (kept for display/AI context);
+ * - volMultiplier 0.9: the calibration deciles showed the raw model was
+ *   UNDERconfident mid-range (predicted 65% → realized 76%), so σ shrinks.
  */
 export const DEFAULT_CRYPTO_PARAMS: CryptoModelParams = {
-  volMode: "ewma",
+  volMode: "rms",
   ewmaHalfLifeMin: 120,
   horizonWeights: {
     "0-15m": { rv30m: 0.55, rv2h: 0.3, rv8h: 0.1, rv24h: 0.05 },
@@ -65,8 +69,8 @@ export const DEFAULT_CRYPTO_PARAMS: CryptoModelParams = {
     "4-24h": { rv30m: 0, rv2h: 0.15, rv8h: 0.45, rv24h: 0.4 },
     "24h+": { rv30m: 0, rv2h: 0, rv8h: 0.3, rv24h: 0.7 },
   },
-  ivBlendBeta: 0.4,
-  volMultiplier: 1.0,
+  ivBlendBeta: 0,
+  volMultiplier: 0.9,
   spotBackedMaxTauMin: 30,
   spotBackedMinZ: 2,
 };

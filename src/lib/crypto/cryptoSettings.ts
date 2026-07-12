@@ -52,24 +52,32 @@ export interface CryptoAutomationSettings {
 
 export const CRYPTO_SETTINGS_KEY = "crypto_automation_settings";
 
+/**
+ * Numeric defaults from the backtest (docs/backtest-report.md): the winning
+ * configuration trades τ ≤ 1h at asks ≥ 30¢ with blended win prob ≥ 30% and
+ * EV ≥ 5¢, HOLDING to settlement — no TP/SL row made the leaderboard's top
+ * 50 (sub-hour positions settle before exits help; selling just burns
+ * spread + fees). Take-profit is parked at the 500% clamp so it can never
+ * fire for entries ≥ 30¢, and stop-loss ships disabled.
+ */
 export const DEFAULT_CRYPTO_AUTOMATION_SETTINGS: CryptoAutomationSettings = {
   enabled: false,
   budgetCents: 5000,
   maxPerTradeCents: 1000,
   takeProfitMode: "profit_pct",
-  takeProfitValue: 30,
-  stopLossEnabled: true,
+  takeProfitValue: 500,
+  stopLossEnabled: false,
   stopLossPct: 50,
   minScore: 0.05,
   minEv: 0.05,
-  minWinProb: 0.4,
+  minWinProb: 0.3,
   maxBuysPerRun: 3,
   maxOpenPositions: 10,
   minAiConfidence: 0.6,
-  minPriceCents: 40,
+  minPriceCents: 30,
   maxProbGap: 0.35,
   maxDailyLossCents: 150,
-  maxTauHours: 6,
+  maxTauHours: 1,
   minTauMinutes: 5,
   maxPerAsset: 2,
   maxSpreadCents: 10,

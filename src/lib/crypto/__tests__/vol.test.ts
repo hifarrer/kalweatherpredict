@@ -10,7 +10,14 @@ import {
 
 const MINUTES_PER_YEAR = 365 * 24 * 60;
 
-const RMS_PARAMS: CryptoModelParams = { ...DEFAULT_CRYPTO_PARAMS, volMode: "rms" };
+// Pin multiplier/beta so these tests isolate the estimator math from the
+// backtest-tuned production defaults.
+const RMS_PARAMS: CryptoModelParams = {
+  ...DEFAULT_CRYPTO_PARAMS,
+  volMode: "rms",
+  volMultiplier: 1,
+  ivBlendBeta: 0.4,
+};
 
 /**
  * Synthetic candle series with constant per-minute log return magnitude r,

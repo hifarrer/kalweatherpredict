@@ -11,7 +11,10 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "backtest:fetch": "tsx scripts/backtest/backtest-crypto.ts fetch",
+    "backtest:run": "tsx scripts/backtest/backtest-crypto.ts run",
+    "backtest:report": "tsx scripts/backtest/backtest-crypto.ts report"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -32,6 +35,7 @@
     "drizzle-kit": "^0.31.1",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
+    "tsx": "^4.23.0",
     "typescript": "^5",
     "vitest": "^4.1.9"
   }

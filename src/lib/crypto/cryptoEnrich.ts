@@ -1,5 +1,11 @@
 import { EnrichedEvent } from "@/types";
-import { computeEventVolume, computeEventVolume24h, computeEarliestClose } from "@/lib/kalshi";
+import {
+  computeEventVolume,
+  computeEventVolume24h,
+  computeEarliestClose,
+  getEvent,
+} from "@/lib/kalshi";
+import { detectAsset } from "@/lib/crypto/assets";
 import { computeMaxEdge } from "@/lib/enrich";
 import { ASSET_MAP } from "@/lib/crypto/assets";
 import { getRecentCandles, getSpot, SpotInfo } from "@/lib/crypto/spot";
@@ -99,4 +105,23 @@ export async function buildEnrichedCryptoEvents(
   }
 
   return { events: enriched, contexts };
+}
+
+/**
+ * Enrich one crypto event by ticker for the analyze/review routes: fresh
+ * fetch from Kalshi (live book), asset derived from the series ticker.
+ */
+export async function enrichSingleCryptoEvent(
+  eventTicker: string,
+): Promise<{ enriched: EnrichedEvent; context: CryptoAssetContext | null } | null> {
+  const event = await getEvent(eventTicker);
+  if (!event) return null;
+  const asset = detectAsset(event.series_ticker);
+  if (!asset) return null;
+
+  const { events, contexts } = await buildEnrichedCryptoEvents([
+    { event, asset: asset.code, earliestClose: null },
+  ]);
+  if (events.length === 0) return null;
+  return { enriched: events[0], context: contexts[asset.code] ?? null };
 }

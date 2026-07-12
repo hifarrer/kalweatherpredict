@@ -6,6 +6,7 @@ import { buildKalshiEventUrl } from "@/lib/kalshi";
 import MarketsList from "@/components/MarketsList";
 import SuggestedActions from "@/components/SuggestedActions";
 import TradeModal, { TradeSuggestion } from "@/components/TradeModal";
+import AiAnalysisModal from "@/components/AiAnalysisModal";
 import { BuySide } from "@/components/MarketsTable";
 import { CryptoAssetContext } from "@/lib/crypto/cryptoEnrich";
 
@@ -41,6 +42,7 @@ export default function CryptoEventCard({ enriched, context }: CryptoEventCardPr
     side: BuySide;
     suggestion?: TradeSuggestion;
   } | null>(null);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setNowTs(Date.now()), 30_000);
@@ -128,9 +130,20 @@ export default function CryptoEventCard({ enriched, context }: CryptoEventCardPr
           )}
         </div>
 
-        {prediction && (
-          <p className="text-[11px] text-kalshi-muted">{prediction.detail}</p>
-        )}
+        <div className="flex items-center justify-between gap-2">
+          {prediction ? (
+            <p className="text-[11px] text-kalshi-muted">{prediction.detail}</p>
+          ) : (
+            <span />
+          )}
+          <button
+            onClick={() => setAnalysisOpen(true)}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-kalshi-orange/20 text-[11px] font-semibold text-kalshi-orange transition-colors"
+            title="Deep AI analysis of this event"
+          >
+            ✨ Analyze
+          </button>
+        </div>
       </div>
 
       <div className="border-t border-kalshi-border" />
@@ -168,6 +181,13 @@ export default function CryptoEventCard({ enriched, context }: CryptoEventCardPr
           suggestion={trade.suggestion}
         />
       )}
+      <AiAnalysisModal
+        eventTicker={event.event_ticker}
+        eventTitle={event.title}
+        isOpen={analysisOpen}
+        onClose={() => setAnalysisOpen(false)}
+        endpoint="/api/crypto/analyze"
+      />
     </div>
   );
 }

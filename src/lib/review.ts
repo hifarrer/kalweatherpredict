@@ -202,7 +202,8 @@ Format your response EXACTLY as this JSON (no markdown fences, no extra text). K
   return review;
 }
 
-function parseReview(text: string): SuggestionReview {
+/** Parse the model's JSON verdict block; shared with the crypto reviewer. */
+export function parseReview(text: string): SuggestionReview {
   const generatedAt = new Date().toISOString();
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {

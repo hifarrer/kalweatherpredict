@@ -8,6 +8,8 @@ interface AiAnalysisModalProps {
   eventTitle: string;
   isOpen: boolean;
   onClose: () => void;
+  /** Analysis endpoint; the crypto dashboard points this at /api/crypto/analyze. */
+  endpoint?: string;
 }
 
 export default function AiAnalysisModal({
@@ -15,6 +17,7 @@ export default function AiAnalysisModal({
   eventTitle,
   isOpen,
   onClose,
+  endpoint = "/api/analyze",
 }: AiAnalysisModalProps) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AiAnalysisResult | null>(null);
@@ -26,7 +29,7 @@ export default function AiAnalysisModal({
     setResult(null);
 
     try {
-      const res = await fetch("/api/analyze", {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ eventTicker }),

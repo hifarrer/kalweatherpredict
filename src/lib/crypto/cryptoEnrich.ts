@@ -80,12 +80,10 @@ export async function buildEnrichedCryptoEvents(
       if (tauHours > 0) {
         const sigma = finalSigma(ctx.rvs, ctx.dvol, tauHours, calibration);
         if (sigma) {
+          const usesIv = DEFAULT_CRYPTO_PARAMS.ivBlendBeta > 0 && sigma.implied !== null;
           prediction = predictCryptoEvent(row.event, ctx.spot, sigma.sigmaAnnual, {
             params: DEFAULT_CRYPTO_PARAMS,
-            sigmaSource:
-              sigma.implied !== null
-                ? `RV+DVOL, cal ×${sigma.calibrationMult.toFixed(2)}`
-                : `RV only, cal ×${sigma.calibrationMult.toFixed(2)}`,
+            sigmaSource: `${usesIv ? "RV+DVOL" : "RV"}, cal ×${sigma.calibrationMult.toFixed(2)}`,
           });
         }
       }

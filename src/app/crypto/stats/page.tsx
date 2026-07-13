@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
+import type { BotChartsPayload } from "@/lib/botStats";
+import {
+  BotPerformanceSection,
+  ModelAccuracyCharts,
+} from "@/components/charts/BotPerformanceSection";
 
 interface StatsGroup {
   key: string;
@@ -25,6 +30,7 @@ interface RecentRow {
 }
 
 interface StatsData {
+  charts: BotChartsPayload;
   overall: StatsGroup;
   byAsset: StatsGroup[];
   byTauBucket: StatsGroup[];
@@ -129,6 +135,8 @@ export default function CryptoStatsPage() {
           </div>
         )}
 
+        {data && data.charts && <BotPerformanceSection charts={data.charts} />}
+
         {data && data.overall.count === 0 && (
           <p className="text-sm text-kalshi-muted py-12 text-center">
             Nothing graded yet — snapshots accumulate as hourly crypto markets settle
@@ -172,6 +180,8 @@ export default function CryptoStatsPage() {
                 </div>
               </div>
             </div>
+
+            {data.charts && <ModelAccuracyCharts charts={data.charts} />}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <GroupTable title="By asset" groups={data.byAsset} />

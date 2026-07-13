@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { CITY_MAP } from "@/lib/cities";
+import type { BotChartsPayload } from "@/lib/botStats";
+import {
+  BotPerformanceSection,
+  ModelAccuracyCharts,
+} from "@/components/charts/BotPerformanceSection";
 
 interface StatsGroup {
   key: string;
@@ -25,6 +30,7 @@ interface RecentRow {
 }
 
 interface StatsData {
+  charts: BotChartsPayload;
   overall: StatsGroup;
   forecastMae: number | null;
   forecastMaeCount: number;
@@ -116,8 +122,10 @@ export default function StatsPage() {
           </div>
         )}
 
+        {data && data.charts && <BotPerformanceSection charts={data.charts} />}
+
         {data && data.overall.count === 0 && (
-          <div className="flex flex-col items-center justify-center py-24 gap-2 text-center">
+          <div className="flex flex-col items-center justify-center py-12 gap-2 text-center">
             <p className="text-lg font-semibold text-kalshi-text">No graded predictions yet</p>
             <p className="text-sm text-kalshi-muted max-w-md">
               Predictions are snapshotted hourly and graded once markets settle.
@@ -164,6 +172,8 @@ export default function StatsPage() {
                 across {data.forecastMaeCount} events with numeric settlement values.
               </p>
             )}
+
+            {data.charts && <ModelAccuracyCharts charts={data.charts} />}
 
             {/* Breakdowns */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

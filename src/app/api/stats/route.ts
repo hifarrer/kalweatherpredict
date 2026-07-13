@@ -4,7 +4,14 @@ import { db } from "@/db/client";
 import { leadBucket } from "@/lib/calibration";
 import { getSigmaCalibration } from "@/lib/calibrationStore";
 import { CITY_MAP } from "@/lib/cities";
-import { computeGroup, GradedRow, groupBy } from "@/lib/statsAgg";
+import {
+  computeGroup,
+  dailyAccuracy,
+  GradedRow,
+  groupBy,
+  reliabilityCurve,
+} from "@/lib/statsAgg";
+import { getBotPerfCharts } from "@/lib/botStats";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +33,8 @@ export async function GET(req: NextRequest) {
         ORDER BY s.market_ticker, s.is_final DESC, s.captured_at DESC
       )
       SELECT l.market_ticker, l.event_ticker, l.city_code, l.metric, l.lead_days,
-             l.forecast_value, l.predicted_prob, l.market_prob, l.target_date,
+             l.forecast_value, l.predicted_prob, l.market_prob,
+             COALESCE(l.target_date, st.target_date) AS target_date,
              st.result, st.actual_value, st.settled_at, e.title
       FROM latest l
       JOIN settlements st ON st.market_ticker = l.market_ticker
@@ -50,8 +58,14 @@ export async function GET(req: NextRequest) {
     }
 
     const calibration = await getSigmaCalibration();
+    const botPerf = await getBotPerfCharts("weather");
 
     return NextResponse.json({
+      charts: {
+        ...botPerf,
+        accuracyDaily: dailyAccuracy(rows),
+        reliability: reliabilityCurve(rows),
+      },
       overall: computeGroup("overall", rows),
       forecastMae: maeCount > 0 ? maeSum / maeCount : null,
       forecastMaeCount: maeCount,

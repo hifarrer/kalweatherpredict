@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { db } from "@/db/client";
-import { computeGroup, GradedRow, groupBy } from "@/lib/statsAgg";
+import {
+  computeGroup,
+  dailyAccuracy,
+  GradedRow,
+  groupBy,
+  reliabilityCurve,
+} from "@/lib/statsAgg";
+import { getBotPerfCharts } from "@/lib/botStats";
 import { tauBucket } from "@/lib/crypto/params";
 import { getCryptoVolCalibration } from "@/lib/crypto/cryptoVolCalibration";
 
@@ -24,7 +31,7 @@ export async function GET() {
       )
       SELECT l.market_ticker, l.event_ticker, l.city_code, l.asset, l.metric,
              l.lead_days, l.tau_hours, l.forecast_value, l.predicted_prob,
-             l.market_prob, l.target_date,
+             l.market_prob, COALESCE(l.target_date, st.target_date) AS target_date,
              st.result, st.actual_value, st.settled_at, e.title
       FROM latest l
       JOIN settlements st ON st.market_ticker = l.market_ticker
@@ -34,8 +41,14 @@ export async function GET() {
 
     const rows = result.rows as unknown as GradedRow[];
     const calibration = await getCryptoVolCalibration();
+    const botPerf = await getBotPerfCharts("crypto");
 
     return NextResponse.json({
+      charts: {
+        ...botPerf,
+        accuracyDaily: dailyAccuracy(rows),
+        reliability: reliabilityCurve(rows),
+      },
       overall: computeGroup("overall", rows),
       byAsset: groupBy(rows, (r) => r.asset),
       byTauBucket: groupBy(rows, (r) =>

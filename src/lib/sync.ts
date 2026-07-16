@@ -7,7 +7,7 @@ import {
   getWeatherSeriesTickers,
   computeEarliestClose,
 } from "@/lib/kalshi";
-import { detectCity, detectStationMismatch } from "@/lib/cities";
+import { detectCity, detectStationMismatch, settlementStationMismatch } from "@/lib/cities";
 
 // --- Tuning constants ---
 
@@ -102,7 +102,15 @@ async function doFullSync(): Promise<number> {
     const primaryRules = e.markets?.[0]?.rules_primary;
     const city = detectCity(e.title, e.series_ticker, primaryRules);
     const cityCode = city?.code ?? null;
-    if (city) detectStationMismatch(city, primaryRules);
+    if (city) {
+      detectStationMismatch(city, primaryRules);
+      const expected = settlementStationMismatch(city, e);
+      if (expected) {
+        console.warn(
+          `[cities] ${e.event_ticker} settles on ${expected} but ${city.code} is configured with ${city.station?.id} — fix the station mapping in cities.ts`,
+        );
+      }
+    }
     const earliestClose = computeEarliestClose(e.markets) || null;
 
     await db

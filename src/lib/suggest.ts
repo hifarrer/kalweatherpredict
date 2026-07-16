@@ -12,6 +12,45 @@ export const CONSENSUS_MIN_EV = 0.0;
 // --- Model/market probability blending -------------------------------------
 /** Base trust in our forecast model vs the market price. */
 export const BLEND_MODEL_WEIGHT = 0.65;
+
+/** Per-section overrides for the scoring pipeline. */
+export interface SectionScoringParams {
+  /** Base model weight in the model/market blend (normal path). */
+  blendModelWeight: number;
+  /** Model weight for observation/spot-backed picks (skip tail/disagree shrinkage). */
+  obsBackedWeight: number;
+  /** Minimum fee-adjusted EV per contract for a "value" pick. */
+  minEv: number;
+  /** Minimum blended win probability for a "value" pick. */
+  minWinProb: number;
+}
+
+/**
+ * Section-specific scoring parameters.
+ *
+ * Weather: a Brier sweep of w·model + (1−w)·market over ~8k settled markets
+ * put the optimum near w = 0.2 (Brier 0.056 — better than the market alone at
+ * 0.064, and far better than 0.105 at the old shared 0.65). The model carries
+ * real signal but was over-trusted ~3×. Obs-backed picks retain more weight
+ * (station observations are facts the book may lag) pending backtest tuning.
+ *
+ * Crypto: the model *beats* its market (Brier 0.048 vs 0.050) and the 0.65
+ * weight is backtest-validated — unchanged.
+ */
+export const SECTION_SCORING: Record<"weather" | "crypto", SectionScoringParams> = {
+  weather: {
+    blendModelWeight: 0.2,
+    obsBackedWeight: 0.5,
+    minEv: SUGGEST_MIN_EV,
+    minWinProb: SUGGEST_MIN_WINPROB,
+  },
+  crypto: {
+    blendModelWeight: BLEND_MODEL_WEIGHT,
+    obsBackedWeight: BLEND_MODEL_WEIGHT,
+    minEv: SUGGEST_MIN_EV,
+    minWinProb: SUGGEST_MIN_WINPROB,
+  },
+};
 /** Market extremity below which model weight shrinks toward the market. */
 export const BLEND_TAIL_FULL = 0.1;
 /** Floor on the tail factor — the model always keeps some influence. */
@@ -48,6 +87,12 @@ export interface SuggestedAction {
   kind: "consensus" | "value";
   rationale: string;
   volume24h: number;
+  /** Same-day observations locked the outcome (post sanity guard). */
+  decided?: boolean;
+  /** Probability was backed by official station obs / live spot. */
+  obsBacked?: boolean;
+  /** Model weight actually applied in the blend (1 = market ignored). */
+  blendWeight?: number;
 }
 
 /**
@@ -79,13 +124,27 @@ export function blendProbability(
   vol24h: number,
   decided: boolean,
   obsBacked = false,
+  weights?: { model?: number; obs?: number },
 ): { pBlend: number; w: number } {
+  const baseWeight = weights?.model ?? BLEND_MODEL_WEIGHT;
+  const obsWeight = weights?.obs ?? baseWeight;
+  // Sanity guard on "decided": a liquid market is never 50+ points wrong
+  // about an already-observed fact, so a huge gap means the observation
+  // pipeline is the likely liar (wrong station, stale/truncated obs, wrong
+  // day). Demote to the obs-backed path so the market keeps a say.
+  if (decided && pMarket != null && Math.abs(pModel - pMarket) > 0.5) {
+    console.warn(
+      `[blend] decided outcome contradicts market by ${Math.abs(pModel - pMarket).toFixed(2)} (model ${pModel.toFixed(3)} vs market ${pMarket.toFixed(2)}) — treating as obs-backed, not decided`,
+    );
+    decided = false;
+    obsBacked = true;
+  }
   if (decided || pMarket == null) return { pBlend: pModel, w: 1 };
 
   const volFactor = vol24h >= BLEND_HIGH_VOLUME ? BLEND_HIGH_VOLUME_FACTOR : 1;
 
   if (obsBacked) {
-    const w = BLEND_MODEL_WEIGHT * volFactor;
+    const w = obsWeight * volFactor;
     return { pBlend: w * pModel + (1 - w) * pMarket, w };
   }
 
@@ -103,19 +162,25 @@ export function blendProbability(
               (1 - BLEND_DISAGREE_MIN),
         );
 
-  const w = BLEND_MODEL_WEIGHT * tailFactor * disagreeFactor * volFactor;
+  const w = baseWeight * tailFactor * disagreeFactor * volFactor;
   return { pBlend: w * pModel + (1 - w) * pMarket, w };
 }
 
 /**
  * Market-implied P(YES) usable for blending: the likelihood's marketProb when
- * it's a real price, else the yes bid/ask midpoint, else null (no blending).
+ * it's a real price, else the yes bid/ask midpoint, else null only when there
+ * is genuinely no book. An extreme price (≥0.995 / ≤0.005) is information —
+ * many informed traders calling the tail dead — not an absence of price;
+ * returning null for it handed the model 100% blend weight at the exact
+ * moment the market was most certain it was wrong, so clamp instead.
  */
 function blendableMarketProb(marketProb: number | null | undefined, m: KalshiMarket): number | null {
   if (marketProb != null && marketProb > 0.005 && marketProb < 0.995) return marketProb;
   const yesBid = parseFloat(m.yes_bid_dollars || "0");
   const yesAsk = parseFloat(m.yes_ask_dollars || "0");
   if (yesBid > 0 && yesAsk > 0 && yesAsk < 1) return (yesBid + yesAsk) / 2;
+  if (marketProb != null && marketProb >= 0.995) return 0.99;
+  if (marketProb != null && marketProb <= 0.005 && marketProb > 0) return 0.01;
   return null;
 }
 
@@ -129,10 +194,14 @@ function blendableMarketProb(marketProb: number | null | undefined, m: KalshiMar
 export function computeSuggestedActions(
   enriched: EnrichedEvent,
   cap = 5,
+  overrides?: Partial<SectionScoringParams>,
 ): SuggestedAction[] {
   const { event, prediction } = enriched;
   const likelihoods = prediction?.marketLikelihoods;
   if (!event.markets || !likelihoods || likelihoods.length === 0) return [];
+
+  const section = enriched.subcategory === "crypto_price" ? "crypto" : "weather";
+  const scoring: SectionScoringParams = { ...SECTION_SCORING[section], ...overrides };
 
   const marketByTicker = new Map(event.markets.map((m) => [m.ticker, m]));
   const unit = metricUnit(enriched.subcategory);
@@ -155,6 +224,7 @@ export function computeSuggestedActions(
       vol24,
       ll.decided === true,
       ll.obsBacked === true,
+      { model: scoring.blendModelWeight, obs: scoring.obsBackedWeight },
     );
 
     // EV of buying each side at its ask. Skip sides with no book (ask 0/1).
@@ -200,6 +270,9 @@ export function computeSuggestedActions(
         kind: "value",
         rationale,
         volume24h: vol24,
+        decided: ll.decided === true,
+        obsBacked: ll.obsBacked === true,
+        blendWeight: w,
       });
     }
   }
@@ -232,7 +305,7 @@ export function computeSuggestedActions(
   const kept = candidates.filter((c) =>
     c.kind === "consensus"
       ? c.evPerContract >= CONSENSUS_MIN_EV
-      : c.evPerContract >= SUGGEST_MIN_EV && c.winProb >= SUGGEST_MIN_WINPROB,
+      : c.evPerContract >= scoring.minEv && c.winProb >= scoring.minWinProb,
   );
 
   // Dedupe by ticker+side (consensus wins), sort by risk-adjusted score, cap

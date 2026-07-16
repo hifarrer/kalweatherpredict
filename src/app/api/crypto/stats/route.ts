@@ -8,7 +8,7 @@ import {
   groupBy,
   reliabilityCurve,
 } from "@/lib/statsAgg";
-import { getBotPerfCharts } from "@/lib/botStats";
+import { getBotPerfCharts, getEvMonitor } from "@/lib/botStats";
 import { tauBucket } from "@/lib/crypto/params";
 import { getCryptoVolCalibration } from "@/lib/crypto/cryptoVolCalibration";
 
@@ -42,8 +42,10 @@ export async function GET() {
     const rows = result.rows as unknown as GradedRow[];
     const calibration = await getCryptoVolCalibration();
     const botPerf = await getBotPerfCharts("crypto");
+    const evMonitor = await getEvMonitor("crypto");
 
     return NextResponse.json({
+      evMonitor,
       charts: {
         ...botPerf,
         accuracyDaily: dailyAccuracy(rows),

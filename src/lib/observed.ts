@@ -119,11 +119,18 @@ export function observationForcedOutcome(
   market: KalshiMarket,
   metric: WeatherMetric,
 ): "yes" | "no" | null {
+  // Only official station observations can force an outcome. The forcing
+  // directions below are safe because the CLI report is at least as extreme
+  // as the running station obs (its continuous sensor dips between reports) —
+  // an inequality that does NOT hold for model-assimilated estimates, which
+  // ran cold enough in practice to "force" outcomes that settled the other
+  // way (graded picks at 99%+ confidence lost ~60% of the time).
+  if (obs.source !== "station") return null;
+
   const floor = market.floor_strike;
   const cap = market.cap_strike;
-  // Station readings are near-exact; model-assimilated estimates can run
-  // several °F off the settlement station, so demand a wide margin.
-  const tol = obs.source === "station" ? 0.5 : 3;
+  // Margin against rounded/provisional station readings.
+  const tol = 1.0;
 
   if (metric === "temperature_low" && obs.observedMin !== null) {
     const o = obs.observedMin;

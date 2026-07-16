@@ -209,9 +209,12 @@ async function buyPass(
   const enrichedEvents = await buildEnrichedEvents(rows);
 
   const candidates: BuyCandidate[] = [];
+  const excludedCities = new Set(settings.excludeCities);
   for (const enriched of enrichedEvents) {
     const leadDays = enriched.prediction?.leadDays ?? null;
     if (settings.targetDateMode === "tomorrow_only" && leadDays !== 1) continue;
+    // Per-city gate: persistently negative cities (see excludeCities docs)
+    if (enriched.cityCode && excludedCities.has(enriched.cityCode)) continue;
 
     const likelihoods = enriched.prediction?.marketLikelihoods ?? [];
     const obsByTicker = new Map(likelihoods.map((ll) => [ll.ticker, ll.obsBacked === true]));
@@ -363,6 +366,9 @@ async function buyPass(
             leadDays,
             aiVerdict: verdict.verdict,
             aiConfidence: verdict.confidence,
+            decided: s.decided ?? null,
+            obsBacked: s.obsBacked ?? null,
+            blendW: s.blendWeight ?? null,
           })
           .returning({ id: suggestions.id });
         suggestionId = row?.id ?? null;

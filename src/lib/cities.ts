@@ -72,12 +72,16 @@ export const CITIES: CityInfo[] = [
     lon: -95.3698,
     keywords: ["houston", "bush", "iah", "hobby"],
     timezone: "America/Chicago",
+    // Kalshi's Houston markets settle on the CLI report issued for HOU —
+    // William P. Hobby Airport — NOT Bush Intercontinental (IAH). Hobby sits
+    // near the Gulf and runs measurably warmer overnight; reading IAH made
+    // the model "certain" about lows/highs that settled the other way.
     station: {
-      id: "KIAH",
-      name: "Houston Intercontinental",
-      lat: 29.9844,
-      lon: -95.3414,
-      aliases: ["bush intercontinental", "intercontinental"],
+      id: "KHOU",
+      name: "Houston Hobby",
+      lat: 29.6454,
+      lon: -95.2789,
+      aliases: ["hobby"],
     },
   },
   {
@@ -489,6 +493,30 @@ export function detectStationMismatch(city: CityInfo, rulesPrimary?: string): vo
       }
     }
   }
+}
+
+/**
+ * The authoritative station check: Kalshi's settlement_sources URL names the
+ * exact NWS CLI report (…product.php?…&issuedby=XXX), and the reporting
+ * station is K<XXX>. Rules text often just says "at Houston", which is how a
+ * KIAH-vs-KHOU (Intercontinental vs Hobby) mismatch went unnoticed — this
+ * catches that class directly. Returns the expected station id when it
+ * disagrees with the configured one, else null.
+ */
+export function settlementStationMismatch(
+  city: CityInfo,
+  event: KalshiEvent,
+): string | null {
+  if (!city.station) return null;
+  for (const src of event.settlement_sources ?? []) {
+    const url = src.url ?? "";
+    if (!url.includes("weather.gov") || !url.includes("product=CLI")) continue;
+    const m = url.match(/issuedby=([A-Za-z0-9]{3,4})/);
+    if (!m) continue;
+    const expected = `K${m[1].toUpperCase()}`;
+    if (expected !== city.station.id) return expected;
+  }
+  return null;
 }
 
 /**

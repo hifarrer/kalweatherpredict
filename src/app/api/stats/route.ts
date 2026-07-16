@@ -11,7 +11,7 @@ import {
   groupBy,
   reliabilityCurve,
 } from "@/lib/statsAgg";
-import { getBotPerfCharts } from "@/lib/botStats";
+import { getBotPerfCharts, getEvMonitor } from "@/lib/botStats";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
 
     const calibration = await getSigmaCalibration();
     const botPerf = await getBotPerfCharts("weather");
+    const evMonitor = await getEvMonitor("weather");
 
     return NextResponse.json({
       charts: {
@@ -75,6 +76,7 @@ export async function GET(req: NextRequest) {
         r.lead_days !== null ? leadBucket(Number(r.lead_days)) : null,
       ),
       calibration,
+      evMonitor,
       recent: (city ? rows.filter((r) => r.city_code === city) : rows).slice(0, 50).map((r) => ({
         marketTicker: r.market_ticker,
         title: r.title,

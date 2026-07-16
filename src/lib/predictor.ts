@@ -48,8 +48,17 @@ export function getRelevantForecastIndex(
 }
 
 /**
+ * Sentinel index for events whose target date is outside the forecast window
+ * (most commonly yesterday's still-open markets after local midnight). No
+ * forecast day is correct for them, so callers must skip prediction entirely.
+ */
+export const STALE_EVENT_INDEX = -1;
+
+/**
  * Resolve the forecast day an event targets, along with its date and lead
  * time. daily[0] is today in the city's local timezone, so leadDays === index.
+ * index is STALE_EVENT_INDEX (with date null) when the event's date falls
+ * outside the forecast window — callers must not predict such events.
  */
 export function getTargetDay(
   forecast: WeatherForecast,
@@ -71,7 +80,7 @@ function resolveForecastIndex(
   market: KalshiMarket,
   timezone?: string,
 ): number {
-  if (forecast.daily.length === 0) return 0;
+  if (forecast.daily.length === 0) return STALE_EVENT_INDEX;
 
   const candidates: string[] = [];
 
@@ -87,6 +96,21 @@ function resolveForecastIndex(
     if (localDate) candidates.push(localDate);
   }
 
+  // The event's OWN date (title/strike) is authoritative. If it falls outside
+  // the forecast window — e.g. yesterday's still-open event after local
+  // midnight, when daily[0] has rolled to the new day — no forecast day is
+  // right, so refuse to predict. The close_time candidate must never rescue
+  // such an event: weather markets close AFTER their target day (12:59 AM
+  // next local day), so it lands on the wrong date by construction, and the
+  // old index-0 fallback silently scored yesterday's event against today's
+  // forecast and observations (99.7% of target-date-mismatched graded
+  // suggestions lost).
+  const today = forecast.daily[0].date;
+  const hasOwnDate = candidates.length > 0;
+  if (hasOwnDate && candidates.every((c) => c < today)) {
+    return STALE_EVENT_INDEX;
+  }
+
   // 3. Market close_time (convert to local timezone date)
   if (market.close_time) {
     const localDate = utcToLocalDateString(market.close_time, timezone);
@@ -99,8 +123,9 @@ function resolveForecastIndex(
     if (idx >= 0) return idx;
   }
 
-  // Fallback: today (index 0)
-  return 0;
+  // An event dated (by title/strike) outside the forecast window is
+  // unpredictable; only genuinely undated events fall back to today.
+  return hasOwnDate ? STALE_EVENT_INDEX : 0;
 }
 
 /**
@@ -867,13 +892,8 @@ export function predictMultiCityEvent(
     const forecast = cityCode ? forecastMap[cityCode] : undefined;
 
     if (!cityCode || !forecast || !mc?.city) {
-      // Unresolved city — no forecast available
-      marketLikelihoods.push({
-        ticker: m.ticker,
-        probability: 0,
-        cityCode: cityCode ?? undefined,
-        marketProb: impliedMarketProb(m),
-      });
+      // Unresolved city — no forecast, so no opinion. Emitting probability 0
+      // here would tell the scorer "NO is certain" from missing data.
       continue;
     }
 
@@ -883,12 +903,8 @@ export function predictMultiCityEvent(
     const target = getTargetDay(forecast, event, m, mc.city?.timezone);
     const daily = forecast.daily[target.index];
     if (!daily) {
-      marketLikelihoods.push({
-        ticker: m.ticker,
-        probability: 0,
-        cityCode,
-        marketProb: impliedMarketProb(m),
-      });
+      // Stale event (target date outside the forecast window) or missing
+      // forecast day — skip rather than claim certainty from missing data.
       continue;
     }
 

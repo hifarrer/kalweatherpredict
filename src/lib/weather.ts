@@ -76,10 +76,16 @@ function round1(v: number): number {
 async function getStationObsToday(
   stationId: string,
   timezone: string,
-): Promise<{ max: number | null; min: number | null; count: number } | null> {
+): Promise<{ max: number | null; min: number | null; count: number; earliest: string | null } | null> {
   try {
+    // Ask for everything since local midnight. The old bare limit=100 covered
+    // only ~8 hours at 5-minute ASOS stations, so evening queries silently
+    // dropped the morning minimum — fatal for low-temperature markets.
+    const start = new Date(Date.now() - 27 * 60 * 60 * 1000)
+      .toISOString()
+      .replace(/\.\d+Z$/, "Z");
     const res = await fetch(
-      `https://api.weather.gov/stations/${stationId}/observations?limit=100`,
+      `https://api.weather.gov/stations/${stationId}/observations?start=${encodeURIComponent(start)}&limit=500`,
       {
         headers: {
           "User-Agent": "kalshi-weather-dashboard (personal use)",
@@ -102,15 +108,21 @@ async function getStationObsToday(
     let max: number | null = null;
     let min: number | null = null;
     let count = 0;
+    let earliest: string | null = null;
     for (const f of data.features ?? []) {
       const ts = f.properties?.timestamp;
       const c = f.properties?.temperature?.value;
       if (ts == null || c == null) continue;
       if (dayFmt.format(new Date(ts)) !== today) continue;
+      // Drop readings NWS flagged as rejected (X) or questioned (Q).
+      // "Z" (preliminary, QC not yet run) must pass — fresh obs carry it.
+      const qc = f.properties?.temperature?.qualityControl;
+      if (typeof qc === "string" && /:(X|Q)$/.test(qc)) continue;
       const tempF = (c * 9) / 5 + 32;
       count++;
       if (max === null || tempF > max) max = tempF;
       if (min === null || tempF < min) min = tempF;
+      if (earliest === null || ts < earliest) earliest = ts;
     }
 
     return count > 0
@@ -118,6 +130,7 @@ async function getStationObsToday(
           max: max !== null ? round1(max) : null,
           min: min !== null ? round1(min) : null,
           count,
+          earliest,
         }
       : null;
   } catch (err) {

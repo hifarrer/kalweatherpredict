@@ -52,20 +52,32 @@ export interface AutomationSettings {
    * losses over the trailing 24h reach this many cents. 0 disables it.
    */
   maxDailyLossCents: number;
+  /**
+   * City codes the bot never buys. Seeded with the cities that were
+   * persistently negative across ~1k graded picks each (LAS 15.9% win,
+   * −9.2¢/contract realized EV; DAL, MSY similar) — every top backtest
+   * configuration excluded them.
+   */
+  excludeCities: string[];
 }
 
 export const AUTOMATION_SETTINGS_KEY = "automation_settings";
 
+// Defaults tuned by the weather backtest (docs/weather-backtest-report.md,
+// 2026-07-16): w=0.2/wObs=0.5 blend (SECTION_SCORING), minEv 8¢, price ≥ 40¢,
+// prob gap ≤ 0.2, TP 50% with stop-loss OFF (stop-losses realized −$22.42 live
+// vs −$2.42 held; no stop-loss config made the backtest top-40), LAS/DAL/MSY
+// excluded. Validation split: 108 trades, 73% win, +$93.05 (8.9% ROI).
 export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   enabled: false,
   budgetCents: 5000,
   maxPerTradeCents: 1000,
   takeProfitMode: "profit_pct",
-  takeProfitValue: 30,
-  stopLossEnabled: true,
+  takeProfitValue: 50,
+  stopLossEnabled: false,
   stopLossPct: 50,
   minScore: 0.05,
-  minEv: 0.05,
+  minEv: 0.08,
   minWinProb: 0.4,
   obsBackedOnly: false,
   targetDateMode: "prefer_tomorrow",
@@ -73,8 +85,9 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   maxOpenPositions: 10,
   minAiConfidence: 0.6,
   minPriceCents: 40,
-  maxProbGap: 0.35,
+  maxProbGap: 0.2,
   maxDailyLossCents: 150,
+  excludeCities: ["LAS", "DAL", "MSY"],
 };
 
 function clampNumber(v: unknown, min: number, max: number, fallback: number): number {
@@ -115,6 +128,14 @@ export function sanitizeSettings(raw: unknown): AutomationSettings {
     minPriceCents: clampInt(s.minPriceCents, 1, 99, d.minPriceCents),
     maxProbGap: clampNumber(s.maxProbGap, 0.05, 1, d.maxProbGap),
     maxDailyLossCents: clampInt(s.maxDailyLossCents, 0, 1_000_000, d.maxDailyLossCents),
+    excludeCities: Array.isArray(s.excludeCities)
+      ? [...new Set(
+          s.excludeCities
+            .filter((c): c is string => typeof c === "string")
+            .map((c) => c.trim().toUpperCase())
+            .filter((c) => /^[A-Z]{2,4}$/.test(c)),
+        )].slice(0, 30)
+      : d.excludeCities,
   };
 }
 

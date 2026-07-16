@@ -12,9 +12,14 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
+    "diagnose:same-day": "tsx scripts/diagnose/same-day-bug.ts",
     "backtest:fetch": "tsx scripts/backtest/backtest-crypto.ts fetch",
     "backtest:run": "tsx scripts/backtest/backtest-crypto.ts run",
-    "backtest:report": "tsx scripts/backtest/backtest-crypto.ts report"
+    "backtest:report": "tsx scripts/backtest/backtest-crypto.ts report",
+    "backtest:weather:fetch": "tsx scripts/backtest/weather/backtest-weather.ts fetch",
+    "backtest:weather:run": "tsx scripts/backtest/weather/backtest-weather.ts run",
+    "backtest:weather:report": "tsx scripts/backtest/weather/backtest-weather.ts report",
+    "backtest:weather:apply": "tsx scripts/backtest/weather/backtest-weather.ts apply"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

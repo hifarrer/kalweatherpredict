@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
-import type { BotChartsPayload } from "@/lib/botStats";
+import type { BotChartsPayload, EvMonitor } from "@/lib/botStats";
 import {
   BotPerformanceSection,
   ModelAccuracyCharts,
 } from "@/components/charts/BotPerformanceSection";
+import { EvMonitorTable } from "@/components/charts/EvMonitorTable";
 
 interface StatsGroup {
   key: string;
@@ -35,6 +36,7 @@ interface StatsData {
   byAsset: StatsGroup[];
   byTauBucket: StatsGroup[];
   calibration: Record<string, { m: number; n: number }> | null;
+  evMonitor?: EvMonitor;
   recent: RecentRow[];
 }
 
@@ -136,6 +138,8 @@ export default function CryptoStatsPage() {
         )}
 
         {data && data.charts && <BotPerformanceSection charts={data.charts} />}
+
+        {data?.evMonitor && <EvMonitorTable monitor={data.evMonitor} />}
 
         {data && data.overall.count === 0 && (
           <p className="text-sm text-kalshi-muted py-12 text-center">

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { CITY_MAP } from "@/lib/cities";
-import type { BotChartsPayload } from "@/lib/botStats";
+import type { BotChartsPayload, EvMonitor } from "@/lib/botStats";
+import { EvMonitorTable } from "@/components/charts/EvMonitorTable";
 import {
   BotPerformanceSection,
   ModelAccuracyCharts,
@@ -38,6 +39,7 @@ interface StatsData {
   byMetric: StatsGroup[];
   byLead: StatsGroup[];
   calibration: Record<string, Record<string, { sigma: number; n: number }>> | null;
+  evMonitor?: EvMonitor;
   recent: RecentRow[];
 }
 
@@ -123,6 +125,8 @@ export default function StatsPage() {
         )}
 
         {data && data.charts && <BotPerformanceSection charts={data.charts} />}
+
+        {data?.evMonitor && <EvMonitorTable monitor={data.evMonitor} />}
 
         {data && data.overall.count === 0 && (
           <div className="flex flex-col items-center justify-center py-12 gap-2 text-center">

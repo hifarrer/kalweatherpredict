@@ -158,12 +158,24 @@ describe("sanitizeSettings — v2 risk fields", () => {
   it("defaults and clamps the new filters", () => {
     const d = sanitizeSettings(undefined);
     expect(d.minPriceCents).toBe(40);
-    expect(d.maxProbGap).toBe(0.35);
+    // Backtest-tuned defaults (docs/weather-backtest-report.md, 2026-07-16)
+    expect(d.maxProbGap).toBe(0.2);
+    expect(d.minEv).toBe(0.08);
+    expect(d.stopLossEnabled).toBe(false);
+    expect(d.takeProfitValue).toBe(50);
     expect(d.maxDailyLossCents).toBe(150);
+    expect(d.excludeCities).toEqual(["LAS", "DAL", "MSY"]);
 
     const s = sanitizeSettings({ minPriceCents: 500, maxProbGap: 0, maxDailyLossCents: -5 });
     expect(s.minPriceCents).toBe(99);
     expect(s.maxProbGap).toBe(0.05);
     expect(s.maxDailyLossCents).toBe(0);
+  });
+
+  it("sanitizes excludeCities to unique uppercase codes", () => {
+    const s = sanitizeSettings({
+      excludeCities: [" las", "dal", "DAL", 7, "not-a-code", "MSY "],
+    });
+    expect(s.excludeCities).toEqual(["LAS", "DAL", "MSY"]);
   });
 });

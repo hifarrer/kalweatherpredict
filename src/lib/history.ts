@@ -74,6 +74,9 @@ export async function snapshotPredictions(opts?: { finalOnly?: boolean }): Promi
           metric: prediction.metric,
           targetDate: prediction.targetDate ?? null,
           leadDays: prediction.leadDays ?? null,
+          decided: s.decided ?? null,
+          obsBacked: s.obsBacked ?? null,
+          blendW: s.blendWeight ?? null,
         });
       }
     }

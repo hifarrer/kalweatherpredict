@@ -76,6 +76,9 @@ export async function snapshotCryptoPredictions(opts?: {
           targetDate: prediction.targetDate ?? null,
           leadDays: null,
           tauHours: prediction.tauHours ?? null,
+          decided: s.decided ?? null,
+          obsBacked: s.obsBacked ?? null,
+          blendW: s.blendWeight ?? null,
         });
       }
     }

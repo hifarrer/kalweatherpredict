@@ -34,6 +34,8 @@ export interface KalshiEvent {
   category: string;
   strike_date: string | null;
   markets?: KalshiMarket[];
+  /** Where the market settles (e.g. a specific NWS CLI report). */
+  settlement_sources?: { url?: string; name?: string }[];
 }
 
 export interface KalshiSeries {
@@ -123,7 +125,9 @@ export interface WeatherForecast {
   pastHours?: { times: string[]; temps: number[]; precip: number[] };
   // Official NWS observations for today at the settlement station (°F).
   // Authoritative over model-assimilated pastHours when present.
-  stationObs?: { max: number | null; min: number | null; count: number };
+  // earliest = timestamp of the first reading counted (coverage signal:
+  // a station that came online mid-day has no claim on the morning minimum).
+  stationObs?: { max: number | null; min: number | null; count: number; earliest?: string | null };
   modelsUsed?: string[];
   stationId?: string;     // NWS settlement station the coords point at
   utcOffsetSeconds?: number;

@@ -401,6 +401,9 @@ async function cryptoBuyPass(
             tauHours,
             aiVerdict: verdict.verdict,
             aiConfidence: verdict.confidence,
+            decided: s.decided ?? null,
+            obsBacked: s.obsBacked ?? null,
+            blendW: s.blendWeight ?? null,
           })
           .returning({ id: suggestions.id });
         suggestionId = row?.id ?? null;

@@ -38,6 +38,9 @@ interface OrderSuggestionPayload {
   leadDays?: number | null;
   aiVerdict?: string | null;
   aiConfidence?: number | null;
+  decided?: boolean;
+  obsBacked?: boolean;
+  blendWeight?: number;
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -168,6 +171,9 @@ export async function POST(req: NextRequest) {
           leadDays: isFiniteNumber(sugg.leadDays) ? sugg.leadDays : null,
           aiVerdict: typeof sugg.aiVerdict === "string" ? sugg.aiVerdict : null,
           aiConfidence: isFiniteNumber(sugg.aiConfidence) ? sugg.aiConfidence : null,
+          decided: typeof sugg.decided === "boolean" ? sugg.decided : null,
+          obsBacked: typeof sugg.obsBacked === "boolean" ? sugg.obsBacked : null,
+          blendW: isFiniteNumber(sugg.blendWeight) ? sugg.blendWeight : null,
         })
         .returning({ id: suggestions.id });
       suggestionId = row?.id ?? null;

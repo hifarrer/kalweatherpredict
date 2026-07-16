@@ -20,34 +20,52 @@ let cache: { data: SigmaCalibration | null; ts: number } | null = null;
  * each market would multiply identical samples.
  */
 export async function recomputeSigmaCalibration(): Promise<SigmaCalibration> {
+  // Robust sigma: 1.4826 × MAD instead of stddev_samp, over rows whose
+  // snapshot target date matches the settlement's. Plain stddev was dominated
+  // by wrong-day (midnight rollover) and wrong-station blunders — lead-0
+  // temperature_high sigma read 6.4°F when the honest error is ~3°F
+  // (docs/same-day-bug-diagnosis.md).
   const result = await db.execute(sql`
     WITH graded AS (
       SELECT DISTINCT ON (s.event_ticker, s.lead_days)
         s.metric,
         s.lead_days,
-        s.forecast_value,
-        st.actual_value
+        (st.actual_value - s.forecast_value) AS err
       FROM prediction_snapshots s
       JOIN settlements st ON st.market_ticker = s.market_ticker
       WHERE st.actual_value IS NOT NULL
         AND s.forecast_value IS NOT NULL
         AND s.lead_days IS NOT NULL
         AND s.section = 'weather'
+        AND (s.target_date IS NULL OR st.target_date IS NULL OR s.target_date = st.target_date)
       ORDER BY s.event_ticker, s.lead_days, s.captured_at DESC
+    ),
+    bucketed AS (
+      SELECT
+        metric,
+        CASE
+          WHEN lead_days <= 0 THEN '0'
+          WHEN lead_days = 1 THEN '1'
+          WHEN lead_days = 2 THEN '2'
+          WHEN lead_days <= 4 THEN '3-4'
+          WHEN lead_days <= 7 THEN '5-7'
+          ELSE '8+'
+        END AS bucket,
+        err
+      FROM graded
+    ),
+    med AS (
+      SELECT metric, bucket,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY err) AS median_err
+      FROM bucketed GROUP BY 1, 2
     )
     SELECT
-      metric,
-      CASE
-        WHEN lead_days <= 0 THEN '0'
-        WHEN lead_days = 1 THEN '1'
-        WHEN lead_days = 2 THEN '2'
-        WHEN lead_days <= 4 THEN '3-4'
-        WHEN lead_days <= 7 THEN '5-7'
-        ELSE '8+'
-      END AS bucket,
-      stddev_samp(actual_value - forecast_value) AS sigma,
+      b.metric,
+      b.bucket,
+      1.4826 * percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(b.err - m.median_err)) AS sigma,
       count(*)::int AS n
-    FROM graded
+    FROM bucketed b
+    JOIN med m ON m.metric = b.metric AND m.bucket = b.bucket
     GROUP BY 1, 2
   `);
 

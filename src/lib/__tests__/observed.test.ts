@@ -77,14 +77,23 @@ describe("observationForcedOutcome", () => {
     expect(observationForcedOutcome(obs, m, "temperature_high")).toBe("yes");
   });
 
-  it("demands a wide margin for model-assimilated (non-station) observations", () => {
+  it("never forces from model-assimilated (non-station) observations", () => {
+    // Open-Meteo's assimilated past hours ran cold enough in live trading to
+    // "force" outcomes that settled the other way (KXLOWTATL-26JUL09: model
+    // obs forced NO, market settled YES at 76). Only official station obs may
+    // force, no matter how wide the margin.
     const obs = makeObs({ observedMin: 79, source: "model" });
-    // 79 < 81 − 3? No — within the model-uncertainty margin, not locked
-    const near = makeMarket({ ticker: "T81", strike_type: "greater", floor_strike: 81 });
-    expect(observationForcedOutcome(obs, near, "temperature_low")).toBeNull();
-    // 79 < 84 − 3 — locked even with the wide margin
     const far = makeMarket({ ticker: "T84", strike_type: "greater", floor_strike: 84 });
-    expect(observationForcedOutcome(obs, far, "temperature_low")).toBe("no");
+    expect(observationForcedOutcome(obs, far, "temperature_low")).toBeNull();
+    const veryFar = makeMarket({ ticker: "T99", strike_type: "greater", floor_strike: 99 });
+    expect(observationForcedOutcome(obs, veryFar, "temperature_low")).toBeNull();
+  });
+
+  it("station forcing demands a margin against rounded/provisional readings", () => {
+    // 83.5 is within 1.0°F of the 84 floor — not locked.
+    const obs = makeObs({ observedMin: 83.5 });
+    const near = makeMarket({ ticker: "T84", strike_type: "greater", floor_strike: 84 });
+    expect(observationForcedOutcome(obs, near, "temperature_low")).toBeNull();
   });
 });
 

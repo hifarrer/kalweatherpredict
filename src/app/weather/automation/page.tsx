@@ -27,6 +27,7 @@ interface AutomationSettings {
   minPriceCents: number;
   maxProbGap: number;
   maxDailyLossCents: number;
+  excludeCities: string[];
 }
 
 interface PositionRow {
@@ -500,6 +501,28 @@ export default function AutomationPage() {
                 />
                 <p className="mt-1 text-[11px] text-kalshi-muted">
                   Buying halts for the day once 24h realized losses reach this; selling continues
+                </p>
+              </div>
+
+              <div>
+                <label className={labelCls}>Excluded cities (comma-separated codes)</label>
+                <input
+                  type="text"
+                  value={(form.excludeCities ?? []).join(", ")}
+                  onChange={(e) =>
+                    set(
+                      "excludeCities",
+                      e.target.value
+                        .split(",")
+                        .map((c) => c.trim().toUpperCase())
+                        .filter(Boolean),
+                    )
+                  }
+                  className={inputCls}
+                  placeholder="LAS, DAL, MSY"
+                />
+                <p className="mt-1 text-[11px] text-kalshi-muted">
+                  The bot never buys these cities — persistently negative realized EV
                 </p>
               </div>
 

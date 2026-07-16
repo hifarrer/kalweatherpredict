@@ -177,6 +177,12 @@ export const suggestions = pgTable(
     tauHours: real("tau_hours"),
     aiVerdict: text("ai_verdict"), // keep | downgrade | veto
     aiConfidence: real("ai_confidence"),
+    // Blend provenance (2026-07): which path produced winProb. Analyzing the
+    // certain-loser cohort required reverse-engineering these from the stored
+    // probabilities — persist them so future analysis/backtests don't have to.
+    decided: boolean("decided"),
+    obsBacked: boolean("obs_backed"),
+    blendW: real("blend_w"), // model weight actually applied (1 = market ignored)
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     // Grading — filled by gradeSuggestions() once the market settles
     result: text("result"), // settlement result "yes" | "no"

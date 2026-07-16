@@ -173,3 +173,66 @@ export async function getBotPerfCharts(
 
   return { balanceSeries, daily, exitReasons };
 }
+
+// --- Predicted-vs-realized EV monitor ---------------------------------------
+
+export interface EvMonitorRow {
+  key: string; // ISO week start or city code
+  n: number;
+  winRate: number | null;
+  avgPredictedEv: number | null; // dollars per contract, at suggestion time
+  avgRealizedEv: number | null; // dollars per contract, after settlement
+}
+
+export interface EvMonitor {
+  weekly: EvMonitorRow[];
+  byCity: EvMonitorRow[]; // trailing 30 days; empty for crypto
+}
+
+/**
+ * The miscalibration alarm: compares what the scorer PREDICTED (fee-adjusted
+ * EV per contract) against what graded suggestions actually REALIZED, weekly
+ * and (for weather) per city. The weather bot ran for weeks predicting +25¢
+ * while realizing +0.7¢ — this table would have screamed within days.
+ */
+export async function getEvMonitor(section: BotSection): Promise<EvMonitor> {
+  const weeklyRes = await db.execute(sql`
+    SELECT to_char(date_trunc('week', created_at), 'YYYY-MM-DD') AS key,
+           count(*)::int AS n,
+           avg((suggested_side_won)::int)::float AS win_rate,
+           avg(ev_per_contract)::float AS pred_ev,
+           avg(realized_ev)::float AS real_ev
+    FROM suggestions
+    WHERE section = ${section} AND graded_at IS NOT NULL
+    GROUP BY 1 ORDER BY 1 DESC LIMIT 8
+  `);
+
+  const cityRes =
+    section === "weather"
+      ? await db.execute(sql`
+          SELECT city_code AS key,
+                 count(*)::int AS n,
+                 avg((suggested_side_won)::int)::float AS win_rate,
+                 avg(ev_per_contract)::float AS pred_ev,
+                 avg(realized_ev)::float AS real_ev
+          FROM suggestions
+          WHERE section = 'weather' AND graded_at IS NOT NULL
+            AND city_code IS NOT NULL
+            AND created_at > now() - interval '30 days'
+          GROUP BY 1 HAVING count(*) >= 25 ORDER BY 5 ASC
+        `)
+      : { rows: [] };
+
+  const mapRow = (r: Record<string, unknown>): EvMonitorRow => ({
+    key: String(r.key),
+    n: Number(r.n),
+    winRate: r.win_rate === null ? null : Number(r.win_rate),
+    avgPredictedEv: r.pred_ev === null ? null : Number(r.pred_ev),
+    avgRealizedEv: r.real_ev === null ? null : Number(r.real_ev),
+  });
+
+  return {
+    weekly: (weeklyRes.rows as Record<string, unknown>[]).map(mapRow),
+    byCity: (cityRes.rows as Record<string, unknown>[]).map(mapRow),
+  };
+}

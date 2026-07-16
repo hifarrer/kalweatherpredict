@@ -164,3 +164,22 @@ ANALYZE_MODEL=claude-sonnet-4-5
 1 (auth) → 2 (maximized view) → 3 (trading; buttons live in 2's modal) → 4 (suggested actions; needs 2+3) → 5 (AI analysis; independent, anytime after 1) → 6 (advantage; needs 3+4's `suggest.ts`).
 
 Each phase is a self-contained, verifiable chunk (~1 session each; 3 is the largest).
+
+## Backtest re-run cadence (2026-07-16)
+
+Both bots' thresholds are backtest-tuned and drift as regimes change. Re-run
+monthly (or after any model change):
+
+- Crypto: `npm run backtest:fetch && npm run backtest:run && npm run backtest:report`
+  → docs/backtest-report.md. Next re-run should add blend weight {0.65, 0.8}
+  as a grid axis (live sweep hinted 0.8 may edge out 0.65).
+- Weather: `npm run backtest:weather:fetch && npm run backtest:weather:run &&
+  npm run backtest:weather:report` → docs/weather-backtest-report.md, then
+  `npm run backtest:weather:apply` to push the chosen config to live settings.
+  The first re-run after ~2 weeks of post-fix data matters most: the current
+  tuning window predates the same-day fixes (Hobby station, rollover), so its
+  same-day rows carry the old bias.
+
+Watch the "Predicted vs realized EV" table on both /stats pages — a
+persistent gap between the columns is the early-warning signal that a model
+is fooling itself again.

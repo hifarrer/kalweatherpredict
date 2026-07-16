@@ -40,6 +40,7 @@ function makeEnriched(
   markets: KalshiMarket[],
   likelihoods: MarketLikelihood[],
   forecastValue: number | null,
+  subcategory: EnrichedEvent["subcategory"] = "temperature_low",
 ): EnrichedEvent {
   const event: KalshiEvent = {
     event_ticker: "EVT",
@@ -66,7 +67,7 @@ function makeEnriched(
     volume24h: 1000,
     earliestClose: "2099-01-01T00:00:00Z",
     prediction,
-    subcategory: "temperature_low",
+    subcategory,
   };
 }
 
@@ -122,6 +123,24 @@ describe("blendProbability", () => {
     expect(w).toBeCloseTo(0.65, 4);
     expect(pBlend).toBeCloseTo(0.65 * 0.996 + 0.35 * 0.01, 4); // ≈ 0.651
   });
+
+  it("demotes a 'decided' outcome that contradicts the market by 50+ points", () => {
+    // KXLOWTPHIL-26JUL14-T67: the obs pipeline called the outcome decided at
+    // P(yes)=0.001 while the market traded at 71¢ — and the market was right.
+    // A liquid book is never that wrong about an observed fact, so decided
+    // must demote to the obs-backed blend instead of taking 100% weight.
+    const { pBlend, w } = blendProbability(0.001, 0.71, 500, true);
+    expect(w).toBeCloseTo(0.65, 4);
+    expect(pBlend).toBeCloseTo(0.65 * 0.001 + 0.35 * 0.71, 4); // ≈ 0.249
+    // The NO side of this blend stays well below auto-trade certainty
+    expect(1 - pBlend).toBeLessThan(0.99);
+  });
+
+  it("keeps decided outcomes decided when the market roughly agrees", () => {
+    const { pBlend, w } = blendProbability(0.999, 0.85, 500, true);
+    expect(w).toBe(1);
+    expect(pBlend).toBe(0.999);
+  });
 });
 
 describe("computeSuggestedActions", () => {
@@ -147,12 +166,12 @@ describe("computeSuggestedActions", () => {
     expect(suggestions.some((s) => s.ticker === "T79" && s.side === "yes")).toBe(true);
   });
 
-  it("keeps a genuine value pick and reports fee-adjusted EV", () => {
+  it("keeps a genuine value pick and reports fee-adjusted EV (weather w=0.2)", () => {
     const markets = [
-      makeMarket({ ticker: "VAL", strike_type: "greater", floor_strike: 60, cap_strike: null, yes_ask_dollars: "0.46", no_ask_dollars: "0.56", yes_bid_dollars: "0.44" }),
+      makeMarket({ ticker: "VAL", strike_type: "greater", floor_strike: 60, cap_strike: null, yes_ask_dollars: "0.50", no_ask_dollars: "0.52", yes_bid_dollars: "0.48" }),
     ];
     const likelihoods: MarketLikelihood[] = [
-      { ticker: "VAL", probability: 0.6, marketProb: 0.45 },
+      { ticker: "VAL", probability: 0.75, marketProb: 0.55 },
     ];
     // forecastValue null → no consensus promotion, pure value pick
     const suggestions = computeSuggestedActions(makeEnriched(markets, likelihoods, null));
@@ -160,11 +179,39 @@ describe("computeSuggestedActions", () => {
     expect(suggestions).toHaveLength(1);
     const s = suggestions[0];
     expect(s.side).toBe("yes");
-    expect(s.winProb).toBeCloseTo(0.5475, 4);
+    // weather blend weight 0.2: 0.2·0.75 + 0.8·0.55 = 0.59
+    expect(s.winProb).toBeCloseTo(0.59, 4);
     expect(s.feePerContract).toBe(0.02);
-    expect(s.evPerContract).toBeCloseTo(0.5475 - 0.46 - 0.02, 4); // +6.75¢
+    expect(s.evPerContract).toBeCloseTo(0.59 - 0.5 - 0.02, 4); // +7¢
     expect(s.evPerContract).toBeGreaterThanOrEqual(SUGGEST_MIN_EV);
     expect(s.winProb).toBeGreaterThanOrEqual(SUGGEST_MIN_WINPROB);
+    expect(s.blendWeight).toBeCloseTo(0.2, 4);
+  });
+
+  it("crypto scoring pins the backtest-validated 0.65 blend weight", () => {
+    // Identical inputs to the old shared-weight behavior — crypto must be
+    // byte-identical after the per-section split (its params are
+    // backtest-validated; only weather's weight changed).
+    const markets = [
+      makeMarket({ ticker: "VAL", strike_type: "greater", floor_strike: 60, cap_strike: null, yes_ask_dollars: "0.46", no_ask_dollars: "0.56", yes_bid_dollars: "0.44" }),
+    ];
+    const likelihoods: MarketLikelihood[] = [
+      { ticker: "VAL", probability: 0.6, marketProb: 0.45 },
+    ];
+    const suggestions = computeSuggestedActions(
+      makeEnriched(markets, likelihoods, null, "crypto_price"),
+    );
+
+    expect(suggestions).toHaveLength(1);
+    const s = suggestions[0];
+    expect(s.winProb).toBeCloseTo(0.65 * 0.6 + 0.35 * 0.45, 4); // 0.5475
+    expect(s.evPerContract).toBeCloseTo(0.5475 - 0.46 - 0.02, 4); // +6.75¢
+    expect(s.blendWeight).toBeCloseTo(0.65, 4);
+
+    // The same inputs under the weather weight fall below the EV floor:
+    // 0.2·0.6 + 0.8·0.45 = 0.48 → EV 0.00. Fewer weather picks is the point.
+    const weather = computeSuggestedActions(makeEnriched(markets, likelihoods, null));
+    expect(weather).toHaveLength(0);
   });
 
   it("drops consensus picks with negative fee-adjusted EV", () => {
@@ -208,9 +255,39 @@ describe("computeSuggestedActions", () => {
     expect(suggestions).toHaveLength(1);
     const s = suggestions[0];
     expect(s.side).toBe("yes");
-    expect(s.winProb).toBeCloseTo(0.651, 2);
-    expect(s.evPerContract).toBeGreaterThan(0.6);
+    // weather obs-backed weight 0.5: 0.5·0.996 + 0.5·0.01 ≈ 0.503
+    expect(s.winProb).toBeCloseTo(0.503, 2);
+    expect(s.evPerContract).toBeGreaterThan(0.45);
     expect(s.rationale).toContain("station observations");
+    expect(s.obsBacked).toBe(true);
+  });
+
+  it("never emits a 99%+ pick against a market pinned at the opposite extreme", () => {
+    // KXHIGHTHOU-26JUL13-T86 shape: wrong-station obs pinned the model to
+    // P(yes)=0.001 and "decided" while the book screamed 99.7¢ YES. The old
+    // blendableMarketProb returned null at extreme prices (no valid mid), so
+    // the broken model kept 100% weight and a win_prob 0.999 NO was suggested
+    // (it lost). Extreme prices now clamp to 0.99/0.01 and the decided guard
+    // demotes, so no certainty-level suggestion can survive.
+    const markets = [
+      makeMarket({
+        ticker: "T86",
+        strike_type: "greater",
+        floor_strike: 86,
+        cap_strike: null,
+        yes_ask_dollars: "0",
+        no_ask_dollars: "0.05",
+        yes_bid_dollars: "0",
+        last_price_dollars: "0.997",
+      }),
+    ];
+    const likelihoods: MarketLikelihood[] = [
+      { ticker: "T86", probability: 0.001, marketProb: 0.997, decided: true },
+    ];
+    const suggestions = computeSuggestedActions(makeEnriched(markets, likelihoods, null));
+    for (const s of suggestions) {
+      expect(s.winProb).toBeLessThan(0.99);
+    }
   });
 
   it("ranks by risk-adjusted score, not raw EV", () => {

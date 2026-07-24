@@ -20,15 +20,26 @@ interface AutomationSettings {
   minEv: number;
   minWinProb: number;
   obsBackedOnly: boolean;
-  targetDateMode: "tomorrow_only" | "prefer_tomorrow" | "any";
+  targetDateMode: "tomorrow_only" | "today_or_tomorrow" | "prefer_tomorrow" | "any";
   maxBuysPerRun: number;
   maxOpenPositions: number;
   minAiConfidence: number;
   minPriceCents: number;
+  maxPriceCents: number;
+  metrics: string[];
   maxProbGap: number;
   maxDailyLossCents: number;
+  trailingGuardTrades: number;
+  trailingGuardLossCents: number;
   excludeCities: string[];
 }
+
+const METRIC_OPTIONS: { value: string; label: string }[] = [
+  { value: "temperature_high", label: "Daily high temp" },
+  { value: "temperature_low", label: "Daily low temp" },
+  { value: "precipitation", label: "Precipitation" },
+  { value: "snowfall", label: "Snowfall" },
+];
 
 interface PositionRow {
   id: number;
@@ -79,6 +90,7 @@ interface StatusResponse {
   balanceCents: number | null;
   deployedCents: number;
   realizedPnlCents: number;
+  trailingGuard: { trades: number; pnlCents: number; tripped: boolean } | null;
   positions: PositionRow[];
   runs: RunRow[];
 }
@@ -230,6 +242,13 @@ export default function AutomationPage() {
             {notice}
           </div>
         )}
+        {status?.trailingGuard?.tripped && (
+          <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-400">
+            Trailing-loss guard is active: the last {status.trailingGuard.trades} closed
+            trades realized {dollars(status.trailingGuard.pnlCents)}. Buying is halted
+            until the window recovers; selling continues.
+          </div>
+        )}
 
         {/* Status banner */}
         {status && (
@@ -374,6 +393,7 @@ export default function AutomationPage() {
                 >
                   <option value="prefer_tomorrow">Prefer tomorrow&apos;s events</option>
                   <option value="tomorrow_only">Tomorrow&apos;s events only</option>
+                  <option value="today_or_tomorrow">Today or tomorrow only</option>
                   <option value="any">Any date</option>
                 </select>
               </div>
@@ -474,6 +494,20 @@ export default function AutomationPage() {
                 </p>
               </div>
               <div>
+                <label className={labelCls}>Max entry price (¢, 99 = no cap)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={form.maxPriceCents}
+                  onChange={(e) => set("maxPriceCents", parseInt(e.target.value || "99", 10))}
+                  className={inputCls}
+                />
+                <p className="mt-1 text-[11px] text-kalshi-muted">
+                  Pins entries to a price band instead of just a floor
+                </p>
+              </div>
+              <div>
                 <label className={labelCls}>Max model-vs-market gap (%)</label>
                 <input
                   type="number"
@@ -502,6 +536,33 @@ export default function AutomationPage() {
                 <p className="mt-1 text-[11px] text-kalshi-muted">
                   Buying halts for the day once 24h realized losses reach this; selling continues
                 </p>
+              </div>
+              <div>
+                <label className={labelCls}>Trailing guard: trades window (0 = off)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={200}
+                  value={form.trailingGuardTrades}
+                  onChange={(e) => set("trailingGuardTrades", parseInt(e.target.value || "0", 10))}
+                  className={inputCls}
+                />
+                <p className="mt-1 text-[11px] text-kalshi-muted">
+                  Halt buying while the last N closed trades sum to a loss — catches slow bleed
+                </p>
+              </div>
+              <div>
+                <label className={labelCls}>Trailing guard: loss threshold ($)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={form.trailingGuardLossCents / 100}
+                  onChange={(e) =>
+                    set("trailingGuardLossCents", Math.round(parseFloat(e.target.value || "0") * 100))
+                  }
+                  className={inputCls}
+                />
               </div>
 
               <div>
@@ -558,6 +619,37 @@ export default function AutomationPage() {
                   onChange={(e) => set("maxOpenPositions", parseInt(e.target.value || "1", 10))}
                   className={inputCls}
                 />
+              </div>
+
+              <div className="md:col-span-3">
+                <label className={labelCls}>Tradable metrics</label>
+                <div className="flex flex-wrap gap-4">
+                  {METRIC_OPTIONS.map((m) => (
+                    <label
+                      key={m.value}
+                      className="flex items-center gap-2 cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={form.metrics.includes(m.value)}
+                        onChange={(e) =>
+                          set(
+                            "metrics",
+                            e.target.checked
+                              ? [...form.metrics, m.value]
+                              : form.metrics.filter((v) => v !== m.value),
+                          )
+                        }
+                        className="w-4 h-4 accent-kalshi-orange"
+                      />
+                      <span className="text-sm text-kalshi-text">{m.label}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-1 text-[11px] text-kalshi-muted">
+                  Precipitation series settle on Weather Company data the model can&apos;t
+                  predict — leave temperature-only unless a backtest says otherwise
+                </p>
               </div>
 
               <div className="md:col-span-3">

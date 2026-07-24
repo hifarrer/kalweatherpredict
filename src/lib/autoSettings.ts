@@ -9,7 +9,19 @@ import { syncMeta } from "@/db/schema";
  */
 
 export type TakeProfitMode = "profit_pct" | "capture_pct";
-export type TargetDateMode = "tomorrow_only" | "prefer_tomorrow" | "any";
+export type TargetDateMode =
+  | "tomorrow_only"
+  | "today_or_tomorrow"
+  | "prefer_tomorrow"
+  | "any";
+
+/** Weather metrics the bot may be allowed to trade (suggestions.metric values). */
+export const WEATHER_METRICS = [
+  "temperature_high",
+  "temperature_low",
+  "precipitation",
+  "snowfall",
+] as const;
 
 export interface AutomationSettings {
   /** Master switch — cron runs are no-ops while false. */
@@ -43,6 +55,17 @@ export interface AutomationSettings {
    */
   minPriceCents: number;
   /**
+   * Skip buys with an ask above this. 99 disables the cap. Lets the backtest
+   * pin the entry universe to a price band instead of just a floor.
+   */
+  maxPriceCents: number;
+  /**
+   * Metrics the bot may buy. The backtested universe is temperature-only —
+   * precipitation series settle on The Weather Company, not the NWS report
+   * the model forecasts (live record 0-for-5, −60.6¢ avg realized EV).
+   */
+  metrics: string[];
+  /**
    * Skip buys where blended winProb exceeds market-implied prob by more than
    * this. When model and market disagree wildly, the market has been right.
    */
@@ -52,6 +75,15 @@ export interface AutomationSettings {
    * losses over the trailing 24h reach this many cents. 0 disables it.
    */
   maxDailyLossCents: number;
+  /**
+   * Slow-bleed guard: halt the buy pass while the last N closed bot trades
+   * sum to a loss of trailingGuardLossCents or worse. Catches the failure
+   * mode the daily breaker can't — same-day entries settle the next morning,
+   * so a config that bleeds a few cents per trade never trips a 24h window.
+   * Self-clearing (re-evaluated every run). trailingGuardTrades 0 disables.
+   */
+  trailingGuardTrades: number;
+  trailingGuardLossCents: number;
   /**
    * City codes the bot never buys. Seeded with the cities that were
    * persistently negative across ~1k graded picks each (LAS 15.9% win,
@@ -85,8 +117,12 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   maxOpenPositions: 10,
   minAiConfidence: 0.6,
   minPriceCents: 40,
+  maxPriceCents: 99,
+  metrics: ["temperature_high", "temperature_low"],
   maxProbGap: 0.2,
   maxDailyLossCents: 150,
+  trailingGuardTrades: 20,
+  trailingGuardLossCents: 100,
   excludeCities: ["LAS", "DAL", "MSY"],
 };
 
@@ -103,6 +139,16 @@ function clampInt(v: unknown, min: number, max: number, fallback: number): numbe
 export function sanitizeSettings(raw: unknown): AutomationSettings {
   const d = DEFAULT_AUTOMATION_SETTINGS;
   const s = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const minPriceCents = clampInt(s.minPriceCents, 1, 99, d.minPriceCents);
+  let maxPriceCents = clampInt(s.maxPriceCents, 1, 99, d.maxPriceCents);
+  if (maxPriceCents < minPriceCents) maxPriceCents = 99;
+  const metrics = Array.isArray(s.metrics)
+    ? [...new Set(
+        s.metrics.filter((m): m is string =>
+          (WEATHER_METRICS as readonly string[]).includes(m as string),
+        ),
+      )]
+    : d.metrics;
   return {
     enabled: typeof s.enabled === "boolean" ? s.enabled : d.enabled,
     budgetCents: clampInt(s.budgetCents, 100, 10_000_000, d.budgetCents),
@@ -119,15 +165,26 @@ export function sanitizeSettings(raw: unknown): AutomationSettings {
     obsBackedOnly:
       typeof s.obsBackedOnly === "boolean" ? s.obsBackedOnly : d.obsBackedOnly,
     targetDateMode:
-      s.targetDateMode === "tomorrow_only" || s.targetDateMode === "any"
+      s.targetDateMode === "tomorrow_only" ||
+      s.targetDateMode === "today_or_tomorrow" ||
+      s.targetDateMode === "any"
         ? s.targetDateMode
         : "prefer_tomorrow",
     maxBuysPerRun: clampInt(s.maxBuysPerRun, 1, 20, d.maxBuysPerRun),
     maxOpenPositions: clampInt(s.maxOpenPositions, 1, 100, d.maxOpenPositions),
     minAiConfidence: clampNumber(s.minAiConfidence, 0, 1, d.minAiConfidence),
-    minPriceCents: clampInt(s.minPriceCents, 1, 99, d.minPriceCents),
+    minPriceCents,
+    maxPriceCents,
+    metrics: metrics.length > 0 ? metrics : d.metrics,
     maxProbGap: clampNumber(s.maxProbGap, 0.05, 1, d.maxProbGap),
     maxDailyLossCents: clampInt(s.maxDailyLossCents, 0, 1_000_000, d.maxDailyLossCents),
+    trailingGuardTrades: clampInt(s.trailingGuardTrades, 0, 200, d.trailingGuardTrades),
+    trailingGuardLossCents: clampInt(
+      s.trailingGuardLossCents,
+      0,
+      1_000_000,
+      d.trailingGuardLossCents,
+    ),
     excludeCities: Array.isArray(s.excludeCities)
       ? [...new Set(
           s.excludeCities

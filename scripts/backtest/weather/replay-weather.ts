@@ -81,6 +81,9 @@ export interface WxModelParams {
 
 export type LeadMode = "lead1" | "lead01" | "any";
 
+/** Which metrics a config may trade (mirrors the live `metrics` allowlist). */
+export type MetricMode = "all" | "high_only" | "high_low";
+
 export interface WxExitParams {
   takeProfitMode: "profit_pct" | "capture_pct";
   takeProfitValue: number; // percent
@@ -93,14 +96,23 @@ export interface WxTradeParams {
   minWinProb: number;
   minScore: number;
   minPriceCents: number;
+  maxPriceCents: number; // 99 = no cap
   maxProbGap: number;
   leadMode: LeadMode;
+  metricMode: MetricMode;
+  obsBackedOnly: boolean;
   excludeCities: string[];
   exits: WxExitParams | null; // null = hold to settlement
   adverseFillCents: number;
   spreadHaircutCents: number;
   stakeCents: number;
   includeBugCohort?: boolean; // default false
+}
+
+export function metricAllowed(mode: MetricMode, metric: string | null): boolean {
+  if (mode === "all") return true;
+  if (mode === "high_only") return metric === "temperature_high";
+  return metric === "temperature_high" || metric === "temperature_low";
 }
 
 // --- Blend-flag inference -----------------------------------------------------
@@ -215,6 +227,186 @@ export function reliabilityByLead(
   return res;
 }
 
+// --- Cohort reliability + empirical calibration -----------------------------------
+
+/**
+ * Suggestions are re-generated hourly, so raw rows are heavily autocorrelated
+ * (one market contributes dozens of near-identical rows). Reliability and
+ * λ fitting use the LAST suggestion per ticker+side — one row per actual bet
+ * opportunity — so effective sample sizes are honest.
+ */
+export function dedupeLastPerTicker(rows: WxRow[]): WxRow[] {
+  const last = new Map<string, WxRow>();
+  for (const r of rows) {
+    const key = `${r.ticker}|${r.side}`;
+    const prev = last.get(key);
+    if (!prev || r.ts > prev.ts) last.set(key, r);
+  }
+  return [...last.values()];
+}
+
+function leadBucket(lead: number | null): string {
+  if (lead != null && lead <= 0) return "0";
+  if (lead === 1) return "1";
+  return "2+";
+}
+
+function priceBand(price: number): string {
+  const c = Math.round(price * 100);
+  if (c < 40) return "<40";
+  if (c <= 50) return "40-50";
+  if (c <= 59) return "51-59";
+  if (c <= 70) return "60-70";
+  if (c <= 79) return "71-79";
+  if (c <= 88) return "80-88";
+  return "89+";
+}
+
+function metricGroup(metric: string | null): string {
+  if (metric === "temperature_high") return "high";
+  if (metric === "temperature_low") return "low";
+  return metric ?? "?";
+}
+
+export interface CohortCell {
+  cohort: string; // "high | 60-70 | lead 0 | obs"
+  n: number;
+  avgPredWinProb: number;
+  realizedWinRate: number;
+  gap: number; // avgPredWinProb − realizedWinRate (positive = overconfident)
+  avgRealizedEvCents: number;
+}
+
+/**
+ * The predicted-vs-realized win-prob table that makes miscalibration visible
+ * per cohort — the live bot's ~5pp overconfidence hid inside aggregate P&L
+ * for weeks. Computed on deduped rows.
+ */
+export function cohortReliability(
+  rows: WxRow[],
+  rescore: (row: WxRow) => RescoredRow | null,
+): CohortCell[] {
+  const acc = new Map<string, { n: number; pred: number; wins: number; evCents: number }>();
+  for (const row of dedupeLastPerTicker(rows)) {
+    const r = rescore(row);
+    if (!r) continue;
+    const flags = inferFlags(row);
+    const key = `${metricGroup(row.metric)} | ${priceBand(row.price)} | lead ${leadBucket(row.lead)} | ${flags.obsBacked ? "obs" : "fcst"}`;
+    const cell = acc.get(key) ?? { n: 0, pred: 0, wins: 0, evCents: 0 };
+    const won = row.side === row.result;
+    cell.n++;
+    cell.pred += r.winProb;
+    cell.wins += won ? 1 : 0;
+    cell.evCents += (won ? 100 : 0) - row.price * 100 - row.fee * 100;
+    acc.set(key, cell);
+  }
+  return [...acc.entries()]
+    .map(([cohort, c]) => ({
+      cohort,
+      n: c.n,
+      avgPredWinProb: c.pred / c.n,
+      realizedWinRate: c.wins / c.n,
+      gap: c.pred / c.n - c.wins / c.n,
+      avgRealizedEvCents: c.evCents / c.n,
+    }))
+    .sort((a, b) => b.n - a.n);
+}
+
+// λ shrink: p' = pMarketSide + λ·(winProb − pMarketSide). λ=0 trusts the
+// market outright, λ=1 keeps the blend as-is. Fitted per cohort because the
+// edge (if any) is cohort-specific — station obs leading the book on a
+// same-day high is a different animal from a lead-1 overnight-low forecast.
+const LAMBDA_GRID = [0, 0.25, 0.5, 0.75, 1];
+const LAMBDA_MIN_COHORT_N = 150;
+
+export interface LambdaTable {
+  global: number;
+  cohorts: Record<string, { lambda: number; n: number }>;
+}
+
+export function lambdaCohortKey(row: WxRow): string {
+  const flags = inferFlags(row);
+  return `${metricGroup(row.metric)}|${leadBucket(row.lead)}|${flags.obsBacked ? "obs" : "fcst"}`;
+}
+
+function bestLambda(
+  samples: { winProb: number; sideMarket: number; won: boolean }[],
+): number {
+  let best = 1;
+  let bestBrier = Infinity;
+  for (const lambda of LAMBDA_GRID) {
+    let sum = 0;
+    for (const s of samples) {
+      const p = Math.min(1, Math.max(0, s.sideMarket + lambda * (s.winProb - s.sideMarket)));
+      sum += (p - (s.won ? 1 : 0)) ** 2;
+    }
+    const brier = sum / Math.max(1, samples.length);
+    if (brier < bestBrier - 1e-12) {
+      bestBrier = brier;
+      best = lambda;
+    }
+  }
+  return best;
+}
+
+/** Fit the per-cohort λ table on (deduped) training rows at fixed blend weights. */
+export function fitLambdaTable(
+  trainRows: WxRow[],
+  rescore: (row: WxRow) => RescoredRow | null,
+): LambdaTable {
+  const byCohort = new Map<string, { winProb: number; sideMarket: number; won: boolean }[]>();
+  const all: { winProb: number; sideMarket: number; won: boolean }[] = [];
+  for (const row of dedupeLastPerTicker(trainRows)) {
+    const r = rescore(row);
+    if (!r || row.pMarket == null) continue;
+    const sideMarket = row.side === "yes" ? row.pMarket : 1 - row.pMarket;
+    const sample = { winProb: r.winProb, sideMarket, won: row.side === row.result };
+    all.push(sample);
+    const key = lambdaCohortKey(row);
+    (byCohort.get(key) ?? byCohort.set(key, []).get(key)!).push(sample);
+  }
+  const global = bestLambda(all);
+  const cohorts: LambdaTable["cohorts"] = {};
+  for (const [key, samples] of byCohort) {
+    cohorts[key] =
+      samples.length >= LAMBDA_MIN_COHORT_N
+        ? { lambda: bestLambda(samples), n: samples.length }
+        : { lambda: global, n: samples.length };
+  }
+  return { global, cohorts };
+}
+
+/** Wrap a rescore fn so winProb/ev/score reflect the fitted λ shrink. */
+export function makeCalibratedRescore(
+  rescore: (row: WxRow) => RescoredRow | null,
+  table: LambdaTable,
+): (row: WxRow) => RescoredRow | null {
+  const cache = new Map<number, RescoredRow | null>();
+  return (row: WxRow): RescoredRow | null => {
+    if (cache.has(row.id)) return cache.get(row.id)!;
+    let out: RescoredRow | null = null;
+    const r = rescore(row);
+    if (r && row.pMarket != null) {
+      const sideMarket = row.side === "yes" ? row.pMarket : 1 - row.pMarket;
+      const lambda = table.cohorts[lambdaCohortKey(row)]?.lambda ?? table.global;
+      const winProb = Math.min(
+        1,
+        Math.max(0, sideMarket + lambda * (r.winProb - sideMarket)),
+      );
+      const ev = winProb - row.price - row.fee;
+      out = {
+        winProb,
+        ev,
+        score: ev * Math.sqrt(Math.max(0, winProb)),
+        probGap: winProb - sideMarket,
+        appliedW: r.appliedW,
+      };
+    }
+    cache.set(row.id, out);
+    return out;
+  };
+}
+
 // --- Trading simulation -----------------------------------------------------------
 
 export interface WxSimTrade {
@@ -268,9 +460,11 @@ export function simulateWeather(
     if (row.city && excludeCities.has(row.city)) continue;
     if (p.leadMode === "lead1" && row.lead !== 1) continue;
     if (p.leadMode === "lead01" && row.lead !== 0 && row.lead !== 1) continue;
+    if (!metricAllowed(p.metricMode, row.metric)) continue;
+    if (p.obsBackedOnly && !inferFlags(row).obsBacked) continue;
 
     const askCents = Math.round(row.price * 100);
-    if (askCents < p.minPriceCents || askCents > 99) continue;
+    if (askCents < p.minPriceCents || askCents > Math.min(99, p.maxPriceCents)) continue;
 
     const r = rescore(row);
     if (!r) continue;

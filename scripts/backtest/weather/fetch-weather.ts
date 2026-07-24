@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { EXCLUDED_WEATHER_SERIES } from "@/lib/weatherSeries";
 import { WxDataset, WxFinal, WxRow, WxSnapPoint } from "./replay-weather";
 
 /**
@@ -39,8 +40,6 @@ function loadEnv(): void {
   }
 }
 
-const TWC_SERIES = /^(KXTEMP[A-Z]*H|KXHOLIDAYTMAX|KXHOLIDAYTMIN|KXRAIN|KXRAINHOLIDAY)-/;
-
 export async function fetchWeatherDataset(): Promise<WxDataset> {
   loadEnv();
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL not set");
@@ -63,7 +62,7 @@ export async function fetchWeatherDataset(): Promise<WxDataset> {
 
   const rows: WxRow[] = rowsRes.rows.map((r) => {
     let exclude: string | null = null;
-    if (TWC_SERIES.test(r.market_ticker)) exclude = "twc_series";
+    if (EXCLUDED_WEATHER_SERIES.test(r.market_ticker)) exclude = "twc_series";
     else if (r.sugg_target && r.settle_target && r.sugg_target !== r.settle_target) {
       exclude = "target_mismatch";
     }
@@ -129,7 +128,7 @@ export async function fetchWeatherDataset(): Promise<WxDataset> {
   `);
   const finals: WxFinal[] = finalsRes.rows.map((r) => {
     let exclude: string | null = null;
-    if (TWC_SERIES.test(r.market_ticker)) exclude = "twc_series";
+    if (EXCLUDED_WEATHER_SERIES.test(r.market_ticker)) exclude = "twc_series";
     else if (r.snap_target && r.settle_target && r.snap_target !== r.settle_target) {
       exclude = "target_mismatch";
     }

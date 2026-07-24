@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evaluateExit, maySuppressStopLoss, sizeContracts } from "@/lib/autoTrade";
+import { trailingGuardTripped } from "@/lib/tradeCommon";
+import { EXCLUDED_WEATHER_SERIES } from "@/lib/weatherSeries";
 import {
   DEFAULT_AUTOMATION_SETTINGS,
   sanitizeSettings,
@@ -177,5 +179,101 @@ describe("sanitizeSettings — v2 risk fields", () => {
       excludeCities: [" las", "dal", "DAL", 7, "not-a-code", "MSY "],
     });
     expect(s.excludeCities).toEqual(["LAS", "DAL", "MSY"]);
+  });
+});
+
+describe("sanitizeSettings — universe-alignment fields", () => {
+  it("accepts today_or_tomorrow and still rejects garbage", () => {
+    expect(sanitizeSettings({ targetDateMode: "today_or_tomorrow" }).targetDateMode).toBe(
+      "today_or_tomorrow",
+    );
+    expect(sanitizeSettings({ targetDateMode: "lead01" }).targetDateMode).toBe(
+      "prefer_tomorrow",
+    );
+  });
+
+  it("clamps maxPriceCents and disables an inverted price band", () => {
+    expect(sanitizeSettings(undefined).maxPriceCents).toBe(99);
+    expect(sanitizeSettings({ maxPriceCents: 85 }).maxPriceCents).toBe(85);
+    expect(sanitizeSettings({ maxPriceCents: 500 }).maxPriceCents).toBe(99);
+    // Cap below the floor is a config error — fall back to "no cap"
+    const inverted = sanitizeSettings({ minPriceCents: 60, maxPriceCents: 50 });
+    expect(inverted.minPriceCents).toBe(60);
+    expect(inverted.maxPriceCents).toBe(99);
+  });
+
+  it("filters metrics to known values and never returns an empty allowlist", () => {
+    expect(sanitizeSettings(undefined).metrics).toEqual([
+      "temperature_high",
+      "temperature_low",
+    ]);
+    expect(
+      sanitizeSettings({ metrics: ["temperature_high", "vibes", 7] }).metrics,
+    ).toEqual(["temperature_high"]);
+    expect(sanitizeSettings({ metrics: ["vibes"] }).metrics).toEqual([
+      "temperature_high",
+      "temperature_low",
+    ]);
+    expect(sanitizeSettings({ metrics: [] }).metrics).toEqual([
+      "temperature_high",
+      "temperature_low",
+    ]);
+  });
+
+  it("clamps the trailing-guard fields", () => {
+    const d = sanitizeSettings(undefined);
+    expect(d.trailingGuardTrades).toBe(20);
+    expect(d.trailingGuardLossCents).toBe(100);
+    const s = sanitizeSettings({ trailingGuardTrades: 9999, trailingGuardLossCents: -1 });
+    expect(s.trailingGuardTrades).toBe(200);
+    expect(s.trailingGuardLossCents).toBe(0);
+  });
+});
+
+describe("EXCLUDED_WEATHER_SERIES", () => {
+  it("matches hourly-temp and TWC-settled series", () => {
+    for (const ticker of [
+      "KXTEMPLAH-26JUL24-B80.5",
+      "KXTEMPNYCH-26JUL24-T90",
+      "KXHOLIDAYTMAX-26JUL04-B95.5",
+      "KXHOLIDAYTMIN-26DEC25-T30",
+      "KXRAINNYC-26JUL-5",
+      "KXRAINCHIM-26JUL-6",
+      "KXRAINHOLIDAY-26JUL04-Y",
+    ]) {
+      expect(ticker).toMatch(EXCLUDED_WEATHER_SERIES);
+    }
+  });
+
+  it("does not match the daily temperature series the bot trades", () => {
+    for (const ticker of [
+      "KXHIGHNY-26JUL18-B79.5",
+      "KXHIGHCHI-26JUL24-B78.5",
+      "KXHIGHTPHX-26JUL23-B112.5",
+      "KXLOWTAUS-26JUL16-B72.5",
+      "KXLOWTSFO-26JUL24-T59",
+    ]) {
+      expect(ticker).not.toMatch(EXCLUDED_WEATHER_SERIES);
+    }
+  });
+});
+
+describe("trailingGuardTripped", () => {
+  const guard = (trades: number, loss: number) => ({
+    trailingGuardTrades: trades,
+    trailingGuardLossCents: loss,
+  });
+
+  it("trips only when a full window sums to the loss threshold or worse", () => {
+    expect(trailingGuardTripped(20, -100, guard(20, 100))).toBe(true);
+    expect(trailingGuardTripped(20, -250, guard(20, 100))).toBe(true);
+    expect(trailingGuardTripped(20, -99, guard(20, 100))).toBe(false);
+    expect(trailingGuardTripped(20, 50, guard(20, 100))).toBe(false);
+  });
+
+  it("never trips on a partial window or when disabled", () => {
+    // Two early losers on a fresh book must not halt the bot
+    expect(trailingGuardTripped(2, -500, guard(20, 100))).toBe(false);
+    expect(trailingGuardTripped(20, -500, guard(0, 100))).toBe(false);
   });
 });

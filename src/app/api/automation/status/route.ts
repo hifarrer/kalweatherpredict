@@ -9,6 +9,7 @@ import {
 } from "@/db/schema";
 import { getBalance, isTradingConfigured } from "@/lib/kalshiTrade";
 import { getAutomationSettings } from "@/lib/autoSettings";
+import { getTrailingGuardState } from "@/lib/tradeCommon";
 import { KalshiEvent } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -104,6 +105,8 @@ export async function GET() {
     actionsByRun.set(a.runId, list);
   }
 
+  const trailingGuard = await getTrailingGuardState("weather", settings);
+
   return NextResponse.json({
     settings,
     tradingConfigured: isTradingConfigured(),
@@ -111,6 +114,7 @@ export async function GET() {
     balanceCents,
     deployedCents,
     realizedPnlCents,
+    trailingGuard,
     positions,
     runs: runs.map((r) => ({ ...r, actions: actionsByRun.get(r.id) ?? [] })),
   });

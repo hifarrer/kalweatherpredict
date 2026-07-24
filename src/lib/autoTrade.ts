@@ -36,6 +36,7 @@ import {
   deployedCents,
   formatCents,
   getOpenPositions,
+  getTrailingGuardState,
   logAction,
   OpenPosition,
   reconcileSettled,
@@ -43,6 +44,7 @@ import {
   sellPass,
   sizeContracts,
 } from "@/lib/tradeCommon";
+import { EXCLUDED_WEATHER_SERIES } from "@/lib/weatherSeries";
 import { EnrichedEvent } from "@/types";
 
 // Pure decision helpers moved to tradeCommon.ts (shared with the crypto
@@ -199,6 +201,17 @@ async function buyPass(
     }
   }
 
+  // Slow-bleed guard: a config that loses a little on every settle never
+  // trips the 24h breaker — judge the last N closed trades instead.
+  const guard = await getTrailingGuardState("weather", settings);
+  if (guard.tripped) {
+    await logAction(runId, {
+      kind: "info",
+      reason: `Buy pass halted by trailing-loss guard: last ${guard.trades} closed trades realized ${formatCents(guard.pnlCents)} (limit -${formatCents(settings.trailingGuardLossCents).replace("+", "")})`,
+    });
+    return { buys: 0, candidates: 0 };
+  }
+
   // Tickers the bot must not touch: any open bot position (either side —
   // buying the opposite side would net-close it), any manual Kalshi holding,
   // or anything stop-lossed within the cooldown window.
@@ -213,6 +226,17 @@ async function buyPass(
   for (const enriched of enrichedEvents) {
     const leadDays = enriched.prediction?.leadDays ?? null;
     if (settings.targetDateMode === "tomorrow_only" && leadDays !== 1) continue;
+    // Strict lead gate — null leads (monthly/no-target series) are rejected
+    // too, closing the hole that let KXRAIN monthlies through.
+    if (
+      settings.targetDateMode === "today_or_tomorrow" &&
+      leadDays !== 0 &&
+      leadDays !== 1
+    ) {
+      continue;
+    }
+    // Metric allowlist: the backtested universe is temperature-only.
+    if (!settings.metrics.includes(enriched.subcategory)) continue;
     // Per-city gate: persistently negative cities (see excludeCities docs)
     if (enriched.cityCode && excludedCities.has(enriched.cityCode)) continue;
 
@@ -225,6 +249,7 @@ async function buyPass(
       if (s.winProb < settings.minWinProb) continue;
       // Cheap-lottery guard: entries under the floor were 6/35 for −$5.27 live
       if (Math.round(s.price * 100) < settings.minPriceCents) continue;
+      if (Math.round(s.price * 100) > settings.maxPriceCents) continue;
       // Disagreement guard: when the model claims far more than the market
       // will pay, the market has been the one that's right. marketProb is
       // P(YES) — flip it for NO picks before comparing to the side winProb.
@@ -232,9 +257,9 @@ async function buyPass(
         const sideMarketProb = s.side === "yes" ? s.marketProb : 1 - s.marketProb;
         if (s.winProb - sideMarketProb > settings.maxProbGap) continue;
       }
-      // Hourly temp series settle on a single hour's reading the daily model
-      // can't price — excluded at the predictor, kept here as backstop
-      if (/^KXTEMP[A-Z]*H-/.test(s.ticker)) continue;
+      // Series the model must never trade (hourly temps, TWC-settled rain/
+      // holiday) — same exclusion list the backtest dataset uses.
+      if (EXCLUDED_WEATHER_SERIES.test(s.ticker)) continue;
       if (settings.obsBackedOnly && !obsByTicker.get(s.ticker)) continue;
       if (marketClosed(enriched, s.ticker)) continue;
       if (heldTickers.has(s.ticker)) continue;

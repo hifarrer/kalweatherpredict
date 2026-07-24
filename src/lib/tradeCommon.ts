@@ -208,6 +208,70 @@ export function deployedCents(positions: OpenPosition[]): number {
   );
 }
 
+// --- Slow-bleed guard ---------------------------------------------------------
+
+export interface TrailingGuardSettings {
+  trailingGuardTrades: number;
+  trailingGuardLossCents: number;
+}
+
+export interface TrailingGuardState {
+  trades: number;
+  pnlCents: number;
+  tripped: boolean;
+}
+
+/** Summed realized P&L over the last n closed positions for a section. */
+export async function trailingSettledPnlCents(
+  section: TradeSection,
+  n: number,
+): Promise<{ trades: number; pnlCents: number }> {
+  const res = await db.execute(sql`
+    SELECT COUNT(*) AS trades, COALESCE(SUM(realized_pnl_cents), 0) AS pnl
+    FROM (
+      SELECT realized_pnl_cents
+      FROM automation_positions
+      WHERE section = ${section} AND status = 'closed' AND closed_at IS NOT NULL
+      ORDER BY closed_at DESC
+      LIMIT ${n}
+    ) recent
+  `);
+  return {
+    trades: Number(res.rows[0]?.trades ?? 0),
+    pnlCents: Number(res.rows[0]?.pnl ?? 0),
+  };
+}
+
+/**
+ * Does the trailing window demand a buy halt? Only judges a full window —
+ * a partial window (fewer closed trades than configured) never trips, so a
+ * fresh book can't be halted by two early losers.
+ */
+export function trailingGuardTripped(
+  trades: number,
+  pnlCents: number,
+  settings: TrailingGuardSettings,
+): boolean {
+  if (settings.trailingGuardTrades <= 0) return false;
+  if (trades < settings.trailingGuardTrades) return false;
+  return pnlCents <= -settings.trailingGuardLossCents;
+}
+
+/** Convenience wrapper: fetch the trailing window and evaluate the guard. */
+export async function getTrailingGuardState(
+  section: TradeSection,
+  settings: TrailingGuardSettings,
+): Promise<TrailingGuardState> {
+  if (settings.trailingGuardTrades <= 0) {
+    return { trades: 0, pnlCents: 0, tripped: false };
+  }
+  const { trades, pnlCents } = await trailingSettledPnlCents(
+    section,
+    settings.trailingGuardTrades,
+  );
+  return { trades, pnlCents, tripped: trailingGuardTripped(trades, pnlCents, settings) };
+}
+
 // --- Settlement reconciliation -------------------------------------------------------
 
 /**

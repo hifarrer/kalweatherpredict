@@ -27,6 +27,7 @@ interface AutomationSettings {
   minPriceCents: number;
   maxPriceCents: number;
   metrics: string[];
+  minLocalHourLead0: number;
   maxProbGap: number;
   maxDailyLossCents: number;
   trailingGuardTrades: number;
@@ -505,6 +506,21 @@ export default function AutomationPage() {
                 />
                 <p className="mt-1 text-[11px] text-kalshi-muted">
                   Pins entries to a price band instead of just a floor
+                </p>
+              </div>
+              <div>
+                <label className={labelCls}>Same-day buys: earliest local hour (0 = off)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={form.minLocalHourLead0}
+                  onChange={(e) => set("minLocalHourLead0", parseInt(e.target.value || "0", 10))}
+                  className={inputCls}
+                />
+                <p className="mt-1 text-[11px] text-kalshi-muted">
+                  Same-day (lead-0) buys wait until this hour at the settlement city —
+                  morning entries fire before the daily high has formed
                 </p>
               </div>
               <div>

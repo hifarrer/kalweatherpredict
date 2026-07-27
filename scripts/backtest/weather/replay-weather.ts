@@ -25,6 +25,14 @@ import { evaluateExit } from "@/lib/tradeCommon";
 
 // --- Dataset shapes (written by fetch-weather.ts) ---------------------------
 
+/**
+ * Bump when WxRow gains fields the replay depends on — the CLI re-fetches
+ * when the on-disk dataset's version is older, so a stale dataset can't
+ * silently fail-close new gates (localHour: null would kill every
+ * hour-gated combo invisibly).
+ */
+export const WX_DATASET_VERSION = 2;
+
 export interface WxRow {
   id: number;
   ticker: string;
@@ -43,6 +51,8 @@ export interface WxRow {
   metric: string | null;
   lead: number | null;
   targetDate: string | null;
+  /** Hour 0-23 at the settlement city when the suggestion was created; null when city unknown. */
+  localHour: number | null;
   ts: number; // suggestion created_at, epoch ms
   result: "yes" | "no";
   exclude?: string | null; // bug-cohort marker
@@ -66,6 +76,7 @@ export interface WxFinal {
 }
 
 export interface WxDataset {
+  version?: number; // WX_DATASET_VERSION at fetch time; absent = v1
   fetchedAt: string;
   rows: WxRow[];
   snaps: Record<string, WxSnapPoint[]>;
@@ -101,6 +112,13 @@ export interface WxTradeParams {
   leadMode: LeadMode;
   metricMode: MetricMode;
   obsBackedOnly: boolean;
+  /**
+   * Same-day (lead-0) rows may only enter at/after this local hour at the
+   * settlement city; 0 disables. Lead-1+ rows always pass; unknown localHour
+   * fails closed. Morning same-day highs were the bleed: the obsBacked flag
+   * fires on the first station ob, hours before the daily max is set.
+   */
+  minLocalHourLead0: number;
   excludeCities: string[];
   exits: WxExitParams | null; // null = hold to settlement
   adverseFillCents: number;
@@ -232,17 +250,19 @@ export function reliabilityByLead(
 /**
  * Suggestions are re-generated hourly, so raw rows are heavily autocorrelated
  * (one market contributes dozens of near-identical rows). Reliability and
- * λ fitting use the LAST suggestion per ticker+side — one row per actual bet
- * opportunity — so effective sample sizes are honest.
+ * λ fitting use the FIRST suggestion per ticker+side — one row per actual bet
+ * opportunity, sampled at entry time. (v4 sampled the LAST suggestion, which
+ * measured the model at its easiest late/obs-converged moment and flattered
+ * both the cohort tables and the fitted λ.)
  */
-export function dedupeLastPerTicker(rows: WxRow[]): WxRow[] {
-  const last = new Map<string, WxRow>();
+export function dedupeFirstPerTicker(rows: WxRow[]): WxRow[] {
+  const first = new Map<string, WxRow>();
   for (const r of rows) {
     const key = `${r.ticker}|${r.side}`;
-    const prev = last.get(key);
-    if (!prev || r.ts > prev.ts) last.set(key, r);
+    const prev = first.get(key);
+    if (!prev || r.ts < prev.ts) first.set(key, r);
   }
-  return [...last.values()];
+  return [...first.values()];
 }
 
 function leadBucket(lead: number | null): string {
@@ -287,7 +307,7 @@ export function cohortReliability(
   rescore: (row: WxRow) => RescoredRow | null,
 ): CohortCell[] {
   const acc = new Map<string, { n: number; pred: number; wins: number; evCents: number }>();
-  for (const row of dedupeLastPerTicker(rows)) {
+  for (const row of dedupeFirstPerTicker(rows)) {
     const r = rescore(row);
     if (!r) continue;
     const flags = inferFlags(row);
@@ -356,7 +376,7 @@ export function fitLambdaTable(
 ): LambdaTable {
   const byCohort = new Map<string, { winProb: number; sideMarket: number; won: boolean }[]>();
   const all: { winProb: number; sideMarket: number; won: boolean }[] = [];
-  for (const row of dedupeLastPerTicker(trainRows)) {
+  for (const row of dedupeFirstPerTicker(trainRows)) {
     const r = rescore(row);
     if (!r || row.pMarket == null) continue;
     const sideMarket = row.side === "yes" ? row.pMarket : 1 - row.pMarket;
@@ -460,6 +480,12 @@ export function simulateWeather(
     if (row.city && excludeCities.has(row.city)) continue;
     if (p.leadMode === "lead1" && row.lead !== 1) continue;
     if (p.leadMode === "lead01" && row.lead !== 0 && row.lead !== 1) continue;
+    // Afternoon gate: with one-position-per-ticker dedup below, the entry
+    // becomes the FIRST suggestion at/after the gate hour — matching when
+    // the live bot would actually buy.
+    if (p.minLocalHourLead0 > 0 && row.lead != null && row.lead <= 0) {
+      if (row.localHour == null || row.localHour < p.minLocalHourLead0) continue;
+    }
     if (!metricAllowed(p.metricMode, row.metric)) continue;
     if (p.obsBackedOnly && !inferFlags(row).obsBacked) continue;
 

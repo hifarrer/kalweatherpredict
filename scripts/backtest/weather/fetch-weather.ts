@@ -1,7 +1,14 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EXCLUDED_WEATHER_SERIES } from "@/lib/weatherSeries";
-import { WxDataset, WxFinal, WxRow, WxSnapPoint } from "./replay-weather";
+import { CITY_MAP, localHourFor } from "@/lib/cities";
+import {
+  WX_DATASET_VERSION,
+  WxDataset,
+  WxFinal,
+  WxRow,
+  WxSnapPoint,
+} from "./replay-weather";
 
 /**
  * Weather backtest dataset fetcher.
@@ -84,6 +91,10 @@ export async function fetchWeatherDataset(): Promise<WxDataset> {
       metric: r.metric,
       lead: r.lead_days === null ? null : Number(r.lead_days),
       targetDate: r.settle_target ?? r.sugg_target ?? null,
+      localHour:
+        r.city_code && CITY_MAP[r.city_code]
+          ? localHourFor(CITY_MAP[r.city_code].timezone, new Date(Number(r.ts)))
+          : null,
       ts: Number(r.ts),
       result: r.result,
       exclude,
@@ -145,6 +156,7 @@ export async function fetchWeatherDataset(): Promise<WxDataset> {
   await pool.end();
 
   const dataset: WxDataset = {
+    version: WX_DATASET_VERSION,
     fetchedAt: new Date().toISOString(),
     rows,
     snaps,
@@ -154,8 +166,10 @@ export async function fetchWeatherDataset(): Promise<WxDataset> {
   mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(DATASET_PATH, JSON.stringify(dataset));
   const excluded = rows.filter((r) => r.exclude).length;
+  const withHour = rows.filter((r) => r.localHour != null).length;
   console.log(
-    `[fetch-weather] ${rows.length} graded decision rows (${excluded} bug-cohort-marked), ` +
+    `[fetch-weather] ${rows.length} graded decision rows (${excluded} bug-cohort-marked, ` +
+      `${withHour} with localHour), ` +
       `${tickers.length} markets, ${Object.values(snaps).reduce((a, b) => a + b.length, 0)} snapshot points, ` +
       `${finals.length} final snapshots → ${DATASET_PATH}`,
   );

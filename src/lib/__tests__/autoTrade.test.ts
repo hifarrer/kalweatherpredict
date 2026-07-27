@@ -220,6 +220,14 @@ describe("sanitizeSettings — universe-alignment fields", () => {
     ]);
   });
 
+  it("clamps minLocalHourLead0 to a valid hour", () => {
+    expect(sanitizeSettings(undefined).minLocalHourLead0).toBe(0);
+    expect(sanitizeSettings({ minLocalHourLead0: 15 }).minLocalHourLead0).toBe(15);
+    expect(sanitizeSettings({ minLocalHourLead0: -5 }).minLocalHourLead0).toBe(0);
+    expect(sanitizeSettings({ minLocalHourLead0: 30 }).minLocalHourLead0).toBe(23);
+    expect(sanitizeSettings({ minLocalHourLead0: 15.7 }).minLocalHourLead0).toBe(16);
+  });
+
   it("clamps the trailing-guard fields", () => {
     const d = sanitizeSettings(undefined);
     expect(d.trailingGuardTrades).toBe(20);

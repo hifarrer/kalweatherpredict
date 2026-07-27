@@ -66,6 +66,14 @@ export interface AutomationSettings {
    */
   metrics: string[];
   /**
+   * Same-day (lead-0) buys only at/after this hour at the settlement city;
+   * 0 disables. The obsBacked flag fires on the first morning station ob,
+   * hours before the daily high forms — morning lead-0 highs ran 65% win vs
+   * 78% predicted (−4.0¢/contract, n=320 distinct markets) while post-16h
+   * entries ran 88% win vs 77% predicted (+16.2¢).
+   */
+  minLocalHourLead0: number;
+  /**
    * Skip buys where blended winProb exceeds market-implied prob by more than
    * this. When model and market disagree wildly, the market has been right.
    */
@@ -119,6 +127,7 @@ export const DEFAULT_AUTOMATION_SETTINGS: AutomationSettings = {
   minPriceCents: 40,
   maxPriceCents: 99,
   metrics: ["temperature_high", "temperature_low"],
+  minLocalHourLead0: 0,
   maxProbGap: 0.2,
   maxDailyLossCents: 150,
   trailingGuardTrades: 20,
@@ -176,6 +185,7 @@ export function sanitizeSettings(raw: unknown): AutomationSettings {
     minPriceCents,
     maxPriceCents,
     metrics: metrics.length > 0 ? metrics : d.metrics,
+    minLocalHourLead0: clampInt(s.minLocalHourLead0, 0, 23, d.minLocalHourLead0),
     maxProbGap: clampNumber(s.maxProbGap, 0.05, 1, d.maxProbGap),
     maxDailyLossCents: clampInt(s.maxDailyLossCents, 0, 1_000_000, d.maxDailyLossCents),
     trailingGuardTrades: clampInt(s.trailingGuardTrades, 0, 200, d.trailingGuardTrades),

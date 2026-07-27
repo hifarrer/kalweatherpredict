@@ -25,7 +25,7 @@ import {
 import { reviewSuggestions } from "@/lib/review";
 import { isAiConfigured } from "@/lib/analyze";
 import { getForecast } from "@/lib/weather";
-import { CITY_MAP } from "@/lib/cities";
+import { CITY_MAP, localHourFor } from "@/lib/cities";
 import {
   AutomationSettings,
   getAutomationSettings,
@@ -234,6 +234,12 @@ async function buyPass(
       leadDays !== 1
     ) {
       continue;
+    }
+    // Afternoon gate: same-day picks wait until the daily high has actually
+    // formed at the settlement city. Unknown city timezone fails closed.
+    if (settings.minLocalHourLead0 > 0 && leadDays !== null && leadDays <= 0) {
+      const tz = enriched.cityCode ? CITY_MAP[enriched.cityCode]?.timezone : undefined;
+      if (!tz || localHourFor(tz, new Date()) < settings.minLocalHourLead0) continue;
     }
     // Metric allowlist: the backtested universe is temperature-only.
     if (!settings.metrics.includes(enriched.subcategory)) continue;

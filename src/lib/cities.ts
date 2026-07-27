@@ -464,6 +464,22 @@ export const CITY_MAP: Record<string, CityInfo> = Object.fromEntries(
 );
 
 /**
+ * Hour of day (0-23) at an IANA timezone. hourCycle "h23" is load-bearing:
+ * hour12:false can render midnight as "24" on some ICU builds. Shared by the
+ * live buy pass and the backtest fetcher so the afternoon gate means the same
+ * thing in both.
+ */
+export function localHourFor(timezone: string, date: Date): number {
+  return Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      hour: "2-digit",
+      hourCycle: "h23",
+    }).format(date),
+  );
+}
+
+/**
  * Coordinates to request forecasts for. Kalshi settles on the NWS climate
  * station named in the market rules, so prefer the station location over
  * the city center when we know it.

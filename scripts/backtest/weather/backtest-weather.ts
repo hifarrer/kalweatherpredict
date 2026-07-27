@@ -803,18 +803,26 @@ function metricsFor(mode: MetricMode): string[] {
   return ["temperature_high", "temperature_low", "precipitation", "snowfall"];
 }
 
-async function apply(): Promise<void> {
+async function apply(force: boolean): Promise<void> {
   const res = JSON.parse(readFileSync(RESULTS_PATH, "utf8")) as Results;
   if (!res.chosen) {
     console.error("[apply] results.json has no chosen config — nothing to apply.");
     process.exit(1);
   }
   if (!res.accepted) {
-    console.error(
-      "[apply] the chosen config FAILED the acceptance checklist — refusing to apply. " +
-        "See docs/weather-backtest-report.md; stay in micro-mode instead.",
+    if (!force) {
+      console.error(
+        "[apply] the chosen config FAILED the acceptance checklist — refusing to apply. " +
+          "See docs/weather-backtest-report.md; stay in micro-mode instead. " +
+          "(Owner override: apply --force.)",
+      );
+      process.exit(1);
+    }
+    console.warn(
+      "[apply] --force: applying DESPITE a failed acceptance checklist (owner-authorized " +
+        "2026-07-27: all P&L criteria pass; the winProb-gap quality bar does not — " +
+        "predicted EV runs ~3× realized; realized is the number being traded on).",
     );
-    process.exit(1);
   }
   const c = res.chosen;
   const exits = EXIT_GRID.find((e) => e.key === c.trade.exitKey)!.exits;
@@ -903,9 +911,9 @@ const cmd = process.argv[2];
     }
     run();
   } else if (cmd === "report") report();
-  else if (cmd === "apply") await apply();
+  else if (cmd === "apply") await apply(process.argv.includes("--force"));
   else {
-    console.error("usage: backtest-weather.ts fetch|run|report|apply");
+    console.error("usage: backtest-weather.ts fetch|run|report|apply [--force]");
     process.exit(1);
   }
 })().catch((err) => {
